@@ -1,0 +1,230 @@
+---
+title: Memory Tools
+description: Store and retrieve information across conversations
+---
+
+Memory tools enable agents to persist and recall information across conversations.
+
+## Available Tools
+
+<CardGroup cols={2}>
+  <Card title="memory_store" icon="floppy-disk">
+    Store new information
+  </Card>
+  <Card title="memory_recall" icon="brain">
+    Search and retrieve memories
+  </Card>
+  <Card title="memory_list" icon="list">
+    List all stored memories
+  </Card>
+  <Card title="memory_forget" icon="trash">
+    Delete specific memories
+  </Card>
+</CardGroup>
+
+## memory_store
+
+Store information for later retrieval.
+
+### Parameters
+
+<ParamField path="content" type="string" required>
+  Information to remember
+</ParamField>
+
+<ParamField path="category" type="string">
+  Category for organization: `fact`, `preference`, `task`, `context`
+</ParamField>
+
+<ParamField path="tags" type="array">
+  Optional tags for filtering
+</ParamField>
+
+### Example
+
+```json
+{
+  "content": "User prefers TypeScript for new projects",
+  "category": "preference",
+  "tags": ["programming", "languages"]
+}
+```
+
+## memory_recall
+
+Search memories using semantic similarity or keywords.
+
+### Parameters
+
+<ParamField path="query" type="string" required>
+  Search query
+</ParamField>
+
+<ParamField path="category" type="string">
+  Filter by category
+</ParamField>
+
+<ParamField path="limit" type="integer">
+  Maximum results (default: 10)
+</ParamField>
+
+### Example
+
+```json
+{
+  "query": "programming language preferences",
+  "category": "preference",
+  "limit": 5
+}
+```
+
+### Response
+
+Returns array of matching memories with relevance scores:
+
+```json
+[
+  {
+    "content": "User prefers TypeScript for new projects",
+    "category": "preference",
+    "tags": ["programming", "languages"],
+    "timestamp": "2026-03-03T12:00:00Z",
+    "relevance": 0.95
+  }
+]
+```
+
+## memory_list
+
+List all memories, optionally filtered by category.
+
+### Parameters
+
+<ParamField path="category" type="string">
+  Filter by category
+</ParamField>
+
+### Example
+
+```json
+{
+  "category": "fact"
+}
+```
+
+## memory_forget
+
+Delete memories by ID or pattern.
+
+### Parameters
+
+<ParamField path="id" type="string">
+  Memory ID to delete
+</ParamField>
+
+<ParamField path="pattern" type="string">
+  Delete all memories matching pattern
+</ParamField>
+
+### Example
+
+```json
+{
+  "pattern": "old project"
+}
+```
+
+## Memory Categories
+
+<Accordion title="fact">
+  Objective information and data
+  
+  Examples:
+  - "API endpoint is https://api.example.com"
+  - "Project uses Python 3.11"
+</Accordion>
+
+<Accordion title="preference">
+  User preferences and choices
+  
+  Examples:
+  - "User prefers concise responses"
+  - "Avoid emojis in documentation"
+</Accordion>
+
+<Accordion title="task">
+  Ongoing tasks and TODOs
+  
+  Examples:
+  - "Need to update README with new features"
+  - "Pending code review for PR #123"
+</Accordion>
+
+<Accordion title="context">
+  Conversation context and state
+  
+  Examples:
+  - "Currently debugging authentication issue"
+  - "Working on feature branch: auth-v2"
+</Accordion>
+
+## Backend Support
+
+<Tabs>
+  <Tab title="Markdown (Default)">
+    Stores memories as markdown files in `~/.zeroclaw/memory/`
+    
+    **Features:**
+    - Human-readable format
+    - Git-friendly
+    - No dependencies
+    - File-based search
+  </Tab>
+  
+  <Tab title="SQLite">
+    Stores memories in SQLite database with vector embeddings
+    
+    **Features:**
+    - Semantic search with cosine similarity
+    - Fast full-text search
+    - Structured queries
+    - Requires embedding model
+  </Tab>
+  
+  <Tab title="PostgreSQL">
+    Enterprise-grade memory with pgvector extension
+    
+    **Features:**
+    - Distributed memory across agents
+    - Advanced vector search
+    - Transaction support
+    - Requires PostgreSQL with pgvector
+  </Tab>
+</Tabs>
+
+## Configuration
+
+```toml
+[memory]
+backend = "sqlite"  # or "markdown", "postgres"
+embedding_model = "text-embedding-3-small"
+max_memories = 10000
+
+[memory.sqlite]
+path = "~/.zeroclaw/memory.db"
+
+[memory.postgres]
+url = "postgresql://user:pass@localhost/zeroclaw"
+```
+
+## Source Code
+
+- [`src/tools/memory_store.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/memory_store.rs)
+- [`src/tools/memory_recall.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/memory_recall.rs)
+- [`src/memory/`](https://github.com/zeroclaw-labs/zeroclaw/tree/main/src/memory)
+
+## Related
+
+- [Memory Trait](/api/memory-trait)
+- [Memory Concepts](/concepts/memory)
+- [Custom Memory Guide](/guides/custom-memory)

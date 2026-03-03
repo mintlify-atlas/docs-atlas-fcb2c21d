@@ -1,0 +1,376 @@
+---
+title: Monitoring
+description: Observability and metrics for production agents
+---
+
+Monitor your ZeroClaw agents with comprehensive logging, metrics, and alerting.
+
+## Observability Stack
+
+ZeroClaw provides multiple observability layers:
+
+<CardGroup cols={2}>
+  <Card title="Logs" icon="file-lines">
+    Structured logging with tracing
+  </Card>
+  <Card title="Metrics" icon="chart-line">
+    Prometheus metrics endpoint
+  </Card>
+  <Card title="Health Checks" icon="heart-pulse">
+    Built-in diagnostics
+  </Card>
+  <Card title="Tracing" icon="diagram-project">
+    OpenTelemetry support
+  </Card>
+</CardGroup>
+
+## Logging
+
+### Log Levels
+
+Control verbosity with `RUST_LOG` environment variable:
+
+```bash
+# Error only
+export RUST_LOG=error
+
+# Info (default)
+export RUST_LOG=info
+
+# Debug
+export RUST_LOG=debug
+
+# Trace (very verbose)
+export RUST_LOG=trace
+
+# Module-specific
+export RUST_LOG=zeroclaw::agent=debug,zeroclaw::tools=trace
+```
+
+### Log Format
+
+Logs use structured format with timestamps:
+
+```
+2026-03-03T12:00:00.000Z INFO zeroclaw::agent: Starting agent loop session_id="abc123"
+2026-03-03T12:00:01.234Z DEBUG zeroclaw::tools::shell: Executing command cmd="ls -la"
+2026-03-03T12:00:01.567Z WARN zeroclaw::security: Blocked command attempt cmd="rm -rf /"
+```
+
+### Log Aggregation
+
+Ship logs to aggregation services:
+
+<Tabs>
+  <Tab title="Grafana Loki">
+    ```bash
+    # Install promtail
+    wget https://github.com/grafana/loki/releases/download/v2.9.0/promtail-linux-amd64.zip
+    unzip promtail-linux-amd64.zip
+    
+    # Configure promtail.yaml
+    cat > promtail.yaml <<EOF
+    server:
+      http_listen_port: 9080
+    
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    
+    scrape_configs:
+      - job_name: zeroclaw
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: zeroclaw
+              __path__: /home/user/.zeroclaw/logs/*.log
+    EOF
+    
+    # Start promtail
+    ./promtail -config.file=promtail.yaml
+    ```
+  </Tab>
+  
+  <Tab title="Elasticsearch">
+    Use Filebeat to ship logs:
+    
+    ```yaml
+    filebeat.inputs:
+    - type: log
+      enabled: true
+      paths:
+        - /home/user/.zeroclaw/logs/*.log
+      fields:
+        service: zeroclaw
+    
+    output.elasticsearch:
+      hosts: ["localhost:9200"]
+    ```
+  </Tab>
+</Tabs>
+
+## Metrics
+
+### Prometheus Endpoint
+
+Enable metrics in `config.toml`:
+
+```toml
+[observability]
+prometheus_enabled = true
+prometheus_port = 9090
+prometheus_path = "/metrics"
+```
+
+Metrics available at `http://localhost:9090/metrics`
+
+### Key Metrics
+
+<AccordionGroup>
+  <Accordion title="Request Metrics">
+    ```
+    zeroclaw_requests_total{channel="telegram",status="success"} 1234
+    zeroclaw_request_duration_seconds{quantile="0.95"} 0.234
+    ```
+  </Accordion>
+  
+  <Accordion title="Tool Execution">
+    ```
+    zeroclaw_tool_calls_total{tool="shell",status="success"} 567
+    zeroclaw_tool_duration_seconds{tool="file_read"} 0.012
+    ```
+  </Accordion>
+  
+  <Accordion title="Provider Metrics">
+    ```
+    zeroclaw_provider_requests_total{provider="anthropic"} 890
+    zeroclaw_token_usage_total{provider="anthropic",type="input"} 456789
+    zeroclaw_token_usage_total{provider="anthropic",type="output"} 123456
+    ```
+  </Accordion>
+  
+  <Accordion title="Error Tracking">
+    ```
+    zeroclaw_errors_total{type="provider_error"} 12
+    zeroclaw_errors_total{type="tool_failure"} 5
+    zeroclaw_errors_total{type="security_block"} 3
+    ```
+  </Accordion>
+  
+  <Accordion title="System Resources">
+    ```
+    zeroclaw_memory_bytes 5242880
+    zeroclaw_cpu_usage_percent 12.5
+    zeroclaw_goroutines 42
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Prometheus Configuration
+
+Add ZeroClaw to Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: 'zeroclaw'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 15s
+```
+
+### Grafana Dashboard
+
+Import the ZeroClaw dashboard:
+
+```bash
+# Download dashboard JSON
+wget https://github.com/zeroclaw-labs/zeroclaw/blob/main/grafana-dashboard.json
+
+# Import in Grafana UI:
+# Dashboards > Import > Upload JSON file
+```
+
+Dashboard includes:
+- Request rate and latency
+- Tool execution statistics
+- Token usage and costs
+- Error rates
+- System resources
+
+## OpenTelemetry
+
+Export traces and metrics to OTLP collectors:
+
+```toml
+[observability]
+otel_enabled = true
+otel_endpoint = "http://localhost:4317"
+otel_service_name = "zeroclaw-prod"
+```
+
+Build with OTLP support:
+
+```bash
+cargo build --features observability-otel
+```
+
+### Trace Example
+
+```
+SPAN: agent_loop
+  SPAN: provider_call provider=anthropic
+    SPAN: http_request duration=234ms
+  SPAN: tool_execution tool=shell
+    SPAN: security_check duration=2ms
+    SPAN: runtime_exec duration=1234ms
+```
+
+## Health Checks
+
+### Liveness Probe
+
+Check if the service is running:
+
+```bash
+curl http://localhost:3000/health
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "uptime_seconds": 86400,
+  "version": "0.1.8"
+}
+```
+
+### Readiness Probe
+
+Check if the service is ready to handle requests:
+
+```bash
+curl http://localhost:3000/ready
+```
+
+Checks:
+- Provider connectivity
+- Channel health
+- Memory backend
+
+### Kubernetes Probes
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+```
+
+## Alerting
+
+### Prometheus Alerts
+
+Create alerting rules:
+
+```yaml
+groups:
+  - name: zeroclaw
+    rules:
+      - alert: HighErrorRate
+        expr: rate(zeroclaw_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+      
+      - alert: HighMemoryUsage
+        expr: zeroclaw_memory_bytes > 500000000
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Memory usage above 500MB"
+      
+      - alert: ProviderDown
+        expr: zeroclaw_provider_health == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Provider unreachable"
+```
+
+### Notification Channels
+
+Configure Alertmanager:
+
+```yaml
+receivers:
+  - name: 'slack'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+        channel: '#zeroclaw-alerts'
+  
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - service_key: 'YOUR_SERVICE_KEY'
+```
+
+## Cost Tracking
+
+Monitor API costs:
+
+```bash
+zeroclaw cost summary
+```
+
+Output:
+```
+Provider    | Input Tokens | Output Tokens | Estimated Cost
+------------|--------------|---------------|--------------
+Anthropic   | 1,234,567    | 456,789       | $12.34
+OpenAI      | 567,890      | 234,567       | $8.90
+```
+
+Cost metrics:
+```
+zeroclaw_cost_total{provider="anthropic"} 12.34
+zeroclaw_cost_total{provider="openai"} 8.90
+```
+
+## Performance Tuning
+
+### Query Latency
+
+Track provider response times:
+
+```
+zeroclaw_provider_latency_seconds{provider="anthropic",quantile="0.5"} 0.234
+zeroclaw_provider_latency_seconds{provider="anthropic",quantile="0.95"} 0.567
+zeroclaw_provider_latency_seconds{provider="anthropic",quantile="0.99"} 0.890
+```
+
+### Tool Execution
+
+Monitor tool performance:
+
+```
+zeroclaw_tool_duration_seconds{tool="shell"} histogram
+zeroclaw_tool_duration_seconds{tool="file_read"} histogram
+```
+
+## Related
+
+- [Running Agents](/operations/running-agents)
+- [Troubleshooting](/operations/troubleshooting)
+- [Daemon Command](/api/commands/daemon)

@@ -1,0 +1,265 @@
+---
+title: Robot Kit Overview
+description: Build AI-powered autonomous robots with ZeroClaw
+---
+
+# Robot Kit Overview
+
+The ZeroClaw Robot Kit is a complete toolkit for building AI-powered robots. Designed for Raspberry Pi deployment with offline Ollama inference, it provides all the tools an AI agent needs to interact with the physical world.
+
+## Features
+
+| Tool | Description | Hardware |
+|------|-------------|----------|
+| **drive** | Omni-directional movement (forward, strafe, rotate) | Motor controller, wheels |
+| **look** | Camera capture + vision model description | USB webcam or Pi Camera |
+| **listen** | Speech-to-text via Whisper.cpp | USB microphone |
+| **speak** | Text-to-speech via Piper TTS | Speaker + amplifier |
+| **sense** | LIDAR, motion sensors, ultrasonic distance | RPLidar, PIR, HC-SR04 |
+| **emote** | LED expressions and sound effects | LED matrix, buzzer |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                 ZeroClaw + Ollama                       │
+│              (High-Level AI Brain)                      │
+└───────────────────────┬─────────────────────────────────┘
+                       │
+         ┌─────────────┬┼─────────────┐
+         │             │             │
+    ┌─────┼────┐  ┌──────┼────┐  ┌──────┼────┐
+    │ drive   │  │  look    │  │  speak   │
+    │ sense   │  │  listen  │  │  emote   │
+    └────┬─────┘  └────┬─────┘  └────┬─────┘
+         │            │             │
+         └────────────┼─────────────┘
+                        │
+    ┌───────────────────┼────────────────────┐
+    │    SafetyMonitor (parallel)              │
+    │  • Pre-move obstacle check              │
+    │  • Proximity-based speed limiting       │
+    │  • Bump sensor response                 │
+    │  • Watchdog auto-stop                   │
+    │  • Hardware E-stop override             │
+    └───────────────────┬────────────────────┘
+                        │
+                        ▼
+    ┌───────────────────────────────────────┐
+    │        Hardware Layer               │
+    │  Motors, Camera, Mic, Speaker, LEDs    │
+    └───────────────────────────────────────┘
+```
+
+## Hardware Requirements
+
+### Minimum Setup
+
+- **Computer**: Raspberry Pi 4 (4GB) or Pi 5
+- **Camera**: USB webcam
+- **Microphone**: USB microphone
+- **Speaker**: Speaker with amplifier
+- **Motors**: Motor controller (L298N, TB6612) + 4 DC motors + omni wheels
+
+### Recommended Setup
+
+- **Computer**: Raspberry Pi 5 (8GB)
+- **Storage**: 64GB+ NVMe drive
+- **Sensors**: RPLidar A1, PIR motion sensors, HC-SR04 ultrasonic
+- **Display**: LED matrix (8x8) for expressions
+- **Safety**: E-stop button, bump sensors
+
+### Full Bill of Materials
+
+| Component | Model | Price (approx) |
+|-----------|-------|----------------|
+| Raspberry Pi 5 | 8GB | $80 |
+| NVMe SSD | 64GB+ | $15-30 |
+| Motor Controller | L298N or TB6612FNG | $5-15 |
+| DC Motors | 4× TT Motors | $20-40 |
+| Omni Wheels | 4× 48mm | $10-20 |
+| LIDAR | RPLidar A1 | $100 |
+| Camera | Pi Camera 3 or USB webcam | $25-50 |
+| Microphone | USB mic | $10-30 |
+| Speaker | 3W amp + speaker | $10-20 |
+| LED Matrix | 8×8 WS2812B | $10 |
+| E-Stop Button | Big red mushroom | $5 |
+| Bump Sensors | 2× Microswitches | $3 |
+| Power | Battery pack (12V, 5A) | $30-50 |
+| Chassis | Robot platform kit | $30-80 |
+
+**Total**: ~$350-550 depending on choices
+
+## Software Dependencies
+
+All software runs **offline** on the Raspberry Pi:
+
+- **Ollama** (local LLM inference): `llama3.2:3b`, `moondream` (vision)
+- **Whisper.cpp** (speech-to-text): `ggml-base.bin` model
+- **Piper TTS** (text-to-speech): `en_US-lessac-medium` voice
+- **RPLidar SDK** (obstacle detection): Python or Rust driver
+- **ZeroClaw** (AI agent runtime): Built from source
+
+## Safety Philosophy
+
+**The AI can REQUEST movement, but SafetyMonitor ALLOWS it.**
+
+The safety system runs as an independent task and can override any AI decision:
+
+- **Pre-movement checks**: No obstacles in path?
+- **Real-time monitoring**: Slow down near walls
+- **Collision response**: Reverse if bump sensor triggered
+- **Watchdog**: Auto-stop if no commands for 30s
+- **Hardware override**: E-stop button cuts all motors
+
+This prevents collisions even if the LLM hallucinates or loses context.
+
+## Use Cases
+
+### Play Companion
+
+```
+Child: "Let's play hide and seek!"
+Robot:
+  1. emote(expression="excited")
+  2. speak(text="Okay! I'll count to 20")
+  3. [waits 20 seconds]
+  4. speak(text="Ready or not, here I come!")
+  5. sense(action="scan")
+  6. drive(action="forward", distance=1)
+  7. look(action="find", prompt="a child hiding")
+  ...
+```
+
+### Patrol Mode
+
+```
+User: "Patrol the living room"
+Robot:
+  1. sense(action="scan", direction="all")
+  2. drive(action="forward", distance=2)
+  3. sense(action="motion")
+  4. look(action="describe")
+  5. [repeat]
+```
+
+### Interactive Conversation
+
+```
+User: [speaks] "Hey Buddy, what do you see?"
+Robot:
+  1. listen(duration=5) → "Hey Buddy, what do you see?"
+  2. look(action="describe")
+  3. speak(text="I see a couch, a TV, and toys!")
+  4. emote(expression="happy")
+```
+
+## Personality: Buddy the Robot
+
+The kit includes a default personality file (`SOUL.md`) that defines:
+
+- **Playful**: Enjoys games and jokes
+- **Patient**: Never frustrated
+- **Safe**: Always prioritizes safety
+- **Curious**: Loves exploring together
+
+**Example behaviors**:
+- Counts to 20 for hide and seek
+- Stays 1 meter away unless invited closer
+- Alerts adults if child seems hurt
+- Remembers each child's name and preferences
+
+See [Robot Kit Setup](/hardware/robot-kit/setup#personality) for customization.
+
+## Quick Start
+
+### 1. Build Robot Kit
+
+```bash
+cd ~/zeroclaw
+cargo build -p zeroclaw-robot-kit --release
+```
+
+### 2. Configure
+
+```bash
+mkdir -p ~/.zeroclaw
+cp crates/robot-kit/robot.toml ~/.zeroclaw/
+cp crates/robot-kit/SOUL.md ~/.zeroclaw/workspace/
+
+# Edit for your hardware
+nano ~/.zeroclaw/robot.toml
+```
+
+### 3. Install Dependencies
+
+See [Robot Kit Setup](/hardware/robot-kit/setup) for detailed Ollama, Whisper, and Piper installation.
+
+### 4. Test Components
+
+```bash
+# Test in mock mode (no hardware)
+export RUST_LOG=info
+./target/release/zeroclaw agent -m "Say hello and show a happy face"
+
+# Test with real hardware (after wiring)
+./target/release/zeroclaw agent -m "Move forward 1 meter"
+```
+
+## Safety Notes
+
+<Warning>
+**Before enabling real motors:**
+
+1. Test in mock mode first
+2. Set conservative speed limits (`max_speed = 0.3`)
+3. Wire an E-stop button to GPIO 4
+4. Add bump sensors to GPIO 5, 6
+5. Test emergency stop works
+6. Supervise robot around children
+7. Enable LIDAR if available
+</Warning>
+
+## Integration with ZeroClaw
+
+The robot kit is currently a **standalone crate**. It defines its own `Tool` trait compatible with ZeroClaw but doesn't require it.
+
+**To integrate with core ZeroClaw runtime:**
+
+1. Create adapter that maps robot-kit tools to `src/tools::Tool`
+2. Register in tool factory
+3. Load `robot.toml` config
+4. Enable `safety` feature for SafetyMonitor
+
+See [Robot Kit API](/hardware/robot-kit/api) for details.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup Guide" icon="wrench" href="/hardware/robot-kit/setup">
+    Complete hardware and software setup
+  </Card>
+  <Card title="API Reference" icon="code" href="/hardware/robot-kit/api">
+    Tool specifications and examples
+  </Card>
+  <Card title="Raspberry Pi Setup" icon="raspberry-pi" href="/hardware/peripherals/raspberry-pi">
+    Configure Raspberry Pi GPIO
+  </Card>
+  <Card title="Supported Boards" icon="microchip" href="/hardware/supported-boards">
+    Hardware platform comparison
+  </Card>
+</CardGroup>
+
+## Examples
+
+Full example code is in `crates/robot-kit/examples/`:
+
+- `basic_drive.rs`: Move forward/backward/rotate
+- `vision_test.rs`: Capture and describe images
+- `speech_test.rs`: Listen and speak
+- `patrol.rs`: Autonomous room patrol
+- `hide_and_seek.rs`: Interactive game
+
+## License
+
+MIT — Same as ZeroClaw

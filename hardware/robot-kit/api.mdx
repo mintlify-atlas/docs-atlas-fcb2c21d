@@ -1,0 +1,625 @@
+---
+title: Robot Kit API
+description: Tool specifications and examples for ZeroClaw robots
+---
+
+# Robot Kit API
+
+Complete API reference for the six core robot tools.
+
+## Tool Overview
+
+| Tool | Inputs | Outputs | Hardware | Latency |
+|------|--------|---------|----------|----------|
+| `drive` | action, distance/angle | confirmation | Motors | 100ms-10s |
+| `look` | action, prompt (optional) | image description | Camera | 2-5s |
+| `listen` | duration (seconds) | transcribed text | Microphone | 1-10s |
+| `speak` | text | confirmation | Speaker | 1-5s |
+| `sense` | action, direction | sensor readings | LIDAR, PIR, ultrasonic | 100ms-1s |
+| `emote` | expression, sound (optional) | confirmation | LED matrix, buzzer | 100-500ms |
+
+## drive
+
+Omni-directional motor control with safety integration.
+
+### Parameters
+
+```json
+{
+  "action": "forward" | "backward" | "strafe_left" | "strafe_right" | "rotate_left" | "rotate_right" | "stop",
+  "distance": 1.0,  // meters (for linear movement)
+  "angle": 90,       // degrees (for rotation)
+  "speed": 0.5       // 0.0-1.0, optional, defaults to config max_speed
+}
+```
+
+### Examples
+
+<CodeGroup>
+```json Forward
+{
+  "action": "forward",
+  "distance": 1.5
+}
+```
+
+```json Rotate
+{
+  "action": "rotate_left",
+  "angle": 90
+}
+```
+
+```json Strafe
+{
+  "action": "strafe_right",
+  "distance": 0.5,
+  "speed": 0.3
+}
+```
+
+```json Stop
+{
+  "action": "stop"
+}
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "success": true,
+  "output": "Moved forward 1.5 meters"
+}
+```
+
+### Backends
+
+The drive tool supports multiple motor control backends:
+
+| Backend | Description | Configuration |
+|---------|-------------|---------------|
+| **mock** | Logs commands, no hardware | `backend = "mock"` |
+| **serial** | Arduino/motor controller | `backend = "serial"`, `serial_port = "/dev/ttyACM0"` |
+| **ros2** | ROS2 nav stack | `backend = "ros2"`, `ros2_topic = "/cmd_vel"` |
+| **gpio** | Direct GPIO control | `backend = "gpio"` (requires `peripheral-rpi` feature) |
+
+### Safety Integration
+
+When wrapped with `SafeDrive`, the tool:
+
+1. **Pre-movement check**: Queries sensors for obstacles
+2. **Real-time monitoring**: Adjusts speed based on proximity
+3. **Collision response**: Reverses if bump sensor triggered
+4. **Watchdog**: Auto-stops after timeout
+5. **E-stop**: Immediate halt on hardware button press
+
+<Warning>
+Always use `SafeDrive` wrapper in production. Direct `DriveTool` bypasses safety checks.
+</Warning>
+
+## look
+
+Capture images and generate AI descriptions using vision models.
+
+### Parameters
+
+```json
+{
+  "action": "capture" | "describe" | "find",
+  "prompt": "a red ball",  // optional, for "find" action
+  "save_path": "/tmp/image.jpg"  // optional, defaults to temp file
+}
+```
+
+### Examples
+
+<CodeGroup>
+```json Describe Scene
+{
+  "action": "describe"
+}
+```
+
+```json Find Object
+{
+  "action": "find",
+  "prompt": "a child hiding behind furniture"
+}
+```
+
+```json Just Capture
+{
+  "action": "capture",
+  "save_path": "/home/pi/photos/snapshot.jpg"
+}
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "success": true,
+  "output": "I see a couch, a TV on the wall, and some toys on the floor. The room is well-lit with natural light from a window."
+}
+```
+
+### Vision Models
+
+Supported models (via Ollama):
+
+| Model | Size | Speed | Accuracy | Recommended For |
+|-------|------|-------|----------|------------------|
+| **moondream** | 1.7B | Fast | Good | Pi 4/5, general use |
+| **llava** | 7B | Slow | Better | Pi 5 only, detailed scenes |
+| **bakllava** | 7B | Slow | Better | Alternative to llava |
+
+Configure in `robot.toml`:
+```toml
+[camera]
+vision_model = "moondream"
+ollama_url = "http://localhost:11434"
+```
+
+## listen
+
+Transcribe speech to text using Whisper.cpp.
+
+### Parameters
+
+```json
+{
+  "duration": 5,  // seconds to record
+  "language": "en"  // optional, defaults to "en"
+}
+```
+
+### Examples
+
+<CodeGroup>
+```json Listen 5 Seconds
+{
+  "duration": 5
+}
+```
+
+```json Listen 10 Seconds
+{
+  "duration": 10,
+  "language": "en"
+}
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "success": true,
+  "output": "Hey Buddy, can you help me find my toy?"
+}
+```
+
+### Whisper Models
+
+| Model | Size | Speed | Accuracy | RAM Usage |
+|-------|------|-------|----------|------------|
+| **tiny** | 75 MB | Fastest | Fair | 200 MB |
+| **base** | 142 MB | Fast | Good | 400 MB |
+| **small** | 466 MB | Medium | Better | 1 GB |
+| **medium** | 1.5 GB | Slow | Best | 2.5 GB |
+
+Recommendation: **base** for Pi 4/5
+
+Configure in `robot.toml`:
+```toml
+[audio]
+whisper_model = "base"
+whisper_path = "/usr/local/bin/whisper-cpp"
+```
+
+## speak
+
+Text-to-speech using Piper TTS.
+
+### Parameters
+
+```json
+{
+  "text": "Hello! I'm ready to play!",
+  "voice": "en_US-lessac-medium"  // optional, defaults to config
+}
+```
+
+### Examples
+
+<CodeGroup>
+```json Simple Speech
+{
+  "text": "I found the ball under the couch!"
+}
+```
+
+```json Custom Voice
+{
+  "text": "Counting: one, two, three, four, five!",
+  "voice": "en_US-amy-medium"
+}
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "success": true,
+  "output": "Spoke: Hello! I'm ready to play!"
+}
+```
+
+### Piper Voices
+
+Available voices:
+
+| Voice | Gender | Style | Speed |
+|-------|--------|-------|-------|
+| **en_US-lessac-medium** | Male | Clear | Medium |
+| **en_US-amy-medium** | Female | Friendly | Medium |
+| **en_US-ryan-high** | Male | Energetic | Fast |
+| **en_GB-alan-medium** | Male | British | Medium |
+
+Download from [Piper Voices](https://huggingface.co/rhasspy/piper-voices)
+
+## sense
+
+Query sensors: LIDAR, motion (PIR), ultrasonic distance.
+
+### Parameters
+
+```json
+{
+  "action": "scan" | "motion" | "distance",
+  "direction": "front" | "all",  // for scan action
+  "max_range": 5.0  // meters, optional
+}
+```
+
+### Examples
+
+<CodeGroup>
+```json LIDAR Scan
+{
+  "action": "scan",
+  "direction": "front"
+}
+```
+
+```json Motion Detection
+{
+  "action": "motion"
+}
+```
+
+```json Distance Check
+{
+  "action": "distance",
+  "direction": "front"
+}
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "success": true,
+  "output": "Front: clear (2.3m), Left: obstacle at 0.8m, Right: clear (3.1m)"
+}
+```
+
+### Sensor Types
+
+| Sensor | Range | Accuracy | Use Case |
+|--------|-------|----------|----------|
+| **RPLidar A1** | 12m, 360° | ±5cm | Obstacle avoidance, mapping |
+| **HC-SR04** | 4m, narrow | ±1cm | Front distance check |
+| **PIR Motion** | 7m, 120° | Binary | Detect people/animals |
+
+Configure in `robot.toml`:
+```toml
+[sensors]
+lidar_port = "/dev/ttyUSB0"
+lidar_type = "rplidar"
+motion_pins = [17, 27]
+ultrasonic_pins = [23, 24]
+```
+
+## emote
+
+Display LED expressions and play sound effects.
+
+### Parameters
+
+```json
+{
+  "expression": "happy" | "sad" | "excited" | "thinking" | "sleepy" | "surprised",
+  "sound": "beep" | "chime" | "buzz"  // optional
+}
+```
+
+### Examples
+
+<CodeGroup>
+```json Happy Face
+{
+  "expression": "happy"
+}
+```
+
+```json Excited with Sound
+{
+  "expression": "excited",
+  "sound": "chime"
+}
+```
+
+```json Thinking
+{
+  "expression": "thinking"
+}
+```
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "success": true,
+  "output": "Displayed: happy face"
+}
+```
+
+### LED Patterns
+
+8x8 LED matrix patterns (WS2812B):
+
+```
+Happy:    Sad:      Excited:  Thinking:
+  ● ●       ● ●       ● ●         ● ●
+  ● ●       ● ●       ● ●         ○ ●
+                                    
+ ●●●●●     ●●●●●     ●●●●●       ●●●
+```
+
+## Error Handling
+
+All tools return a `ToolResult`:
+
+```rust
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+}
+```
+
+### Common Errors
+
+```json
+{
+  "success": false,
+  "output": "",
+  "error": "Obstacle detected at 0.2m, stopping"
+}
+```
+
+```json
+{
+  "success": false,
+  "output": "",
+  "error": "Camera device /dev/video0 not found"
+}
+```
+
+```json
+{
+  "success": false,
+  "output": "",
+  "error": "E-stop pressed, all movement disabled"
+}
+```
+
+## Usage Examples
+
+### Hide and Seek
+
+```rust
+use zeroclaw_robot_kit::*;
+
+#[tokio::main]
+async fn main() {
+    let config = RobotConfig::default();
+    let tools = create_tools(&config);
+    
+    // Game sequence
+    speak("I'll count to 20. Go hide!");
+    emote("excited");
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    
+    speak("Ready or not, here I come!");
+    
+    loop {
+        let obstacles = sense("scan", "all");
+        drive("forward", 1.0);
+        let scene = look("find", "a child hiding");
+        
+        if scene.contains("child") {
+            speak("Found you!");
+            emote("happy", Some("chime"));
+            break;
+        }
+    }
+}
+```
+
+### Voice-Controlled Movement
+
+```rust
+loop {
+    speak("Where should I go?");
+    let command = listen(5).await?;
+    
+    match command.as_str() {
+        cmd if cmd.contains("forward") => drive("forward", 1.0),
+        cmd if cmd.contains("back") => drive("backward", 0.5),
+        cmd if cmd.contains("left") => drive("rotate_left", 90),
+        cmd if cmd.contains("right") => drive("rotate_right", 90),
+        cmd if cmd.contains("stop") => {
+            drive("stop", 0.0);
+            break;
+        },
+        _ => speak("I didn't understand that"),
+    }
+}
+```
+
+### Autonomous Patrol
+
+```rust
+loop {
+    // Check for obstacles
+    let scan = sense("scan", "front");
+    if scan.min_distance < 0.5 {
+        speak("Obstacle ahead, turning");
+        drive("rotate_right", 90);
+        continue;
+    }
+    
+    // Check for motion
+    let motion = sense("motion");
+    if motion.detected {
+        speak("I see movement!");
+        let scene = look("describe");
+        speak(&format!("I see: {}", scene));
+    }
+    
+    // Continue patrol
+    drive("forward", 2.0);
+}
+```
+
+## Safety Monitor
+
+The `SafetyMonitor` runs as an independent task:
+
+```rust
+use zeroclaw_robot_kit::{SafetyMonitor, SafeDrive, DriveTool};
+
+let config = RobotConfig::default();
+
+// Create safety monitor
+let (safety, safety_rx) = SafetyMonitor::new(config.safety.clone());
+let safety = Arc::new(safety);
+
+// Start sensor feed
+tokio::spawn(async move {
+    loop {
+        let reading = get_lidar_data().await;
+        safety.update_sensor(reading).await;
+    }
+});
+
+// Wrap drive with safety
+let drive = Arc::new(DriveTool::new(config.clone()));
+let safe_drive = SafeDrive::new(drive, safety.clone());
+
+// Now all drive commands go through safety checks
+safe_drive.execute(json!({"action": "forward", "distance": 2.0})).await;
+```
+
+### Safety Events
+
+```rust
+pub enum SafetyEvent {
+    ObstacleDetected { distance: f64, angle: i32 },
+    BumpSensorTriggered { sensor: String },
+    EStopPressed,
+    SensorTimeout,
+    SpeedLimited { from: f64, to: f64, reason: String },
+    MovementBlocked { reason: String },
+}
+```
+
+## Troubleshooting
+
+### Drive not working
+
+```bash
+# Check backend
+grep backend ~/.zeroclaw/robot.toml
+
+# Serial: verify port
+ls /dev/ttyACM*
+
+# ROS2: check topic
+ros2 topic list | grep cmd_vel
+
+# Test in mock mode
+sed -i 's/backend = ".*"/backend = "mock"/' ~/.zeroclaw/robot.toml
+```
+
+### Camera not found
+
+```bash
+# List cameras
+ls /dev/video*
+ffmpeg -f v4l2 -list_formats all -i /dev/video0
+
+# Check permissions
+sudo usermod -aG video $USER
+```
+
+### Ollama vision fails
+
+```bash
+# Check Ollama is running
+curl http://localhost:11434/api/tags
+
+# Test vision model
+ollama run moondream "Describe this image: /tmp/test.jpg"
+
+# Use smaller model
+sed -i 's/vision_model = ".*"/vision_model = "moondream"/' ~/.zeroclaw/robot.toml
+```
+
+### Safety prevents movement
+
+```bash
+# Check sensor readings
+tail -f /tmp/zeroclaw_sensors.fifo
+
+# Increase safety thresholds (testing only!)
+sed -i 's/min_obstacle_distance = 0.3/min_obstacle_distance = 0.15/' ~/.zeroclaw/robot.toml
+
+# Disable safety (dangerous!)
+sed -i 's/predict_collisions = true/predict_collisions = false/' ~/.zeroclaw/robot.toml
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup Guide" icon="wrench" href="/hardware/robot-kit/setup">
+    Complete hardware and software setup
+  </Card>
+  <Card title="Overview" icon="robot" href="/hardware/robot-kit/overview">
+    Architecture and features
+  </Card>
+  <Card title="Examples" icon="book" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/crates/robot-kit/examples">
+    Full example programs
+  </Card>
+  <Card title="Source Code" icon="code" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/crates/robot-kit">
+    View robot kit source
+  </Card>
+</CardGroup>

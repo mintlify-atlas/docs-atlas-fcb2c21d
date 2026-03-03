@@ -1,0 +1,649 @@
+---
+title: Working with Hardware Peripherals
+description: Learn how to connect and control hardware devices with ZeroClaw
+---
+
+ZeroClaw can control physical hardware through peripherals — microcontrollers, Raspberry Pi GPIO, sensors, and actuators. Peripherals expose their capabilities as tools that the agent can invoke.
+
+## Overview
+
+Peripherals implement the `Peripheral` trait, which provides:
+
+- **Connection management**: Connect to hardware over serial, native GPIO, or network
+- **Tool exposure**: Each peripheral exposes tools the agent can use
+- **Health monitoring**: Check device connectivity and status
+
+```rust
+#[async_trait]
+pub trait Peripheral: Send + Sync {
+    fn name(&self) -> &str;
+    fn board_type(&self) -> &str;
+    async fn connect(&mut self) -> Result<()>;
+    async fn disconnect(&mut self) -> Result<()>;
+    async fn health_check(&self) -> bool;
+    fn tools(&self) -> Vec<Box<dyn Tool>>;
+}
+```
+
+## Supported Hardware
+
+ZeroClaw supports multiple hardware platforms:
+
+<CardGroup cols={2}>
+  <Card title="Raspberry Pi GPIO" icon="raspberry-pi">
+    Native GPIO control via rppal (BCM pin numbering)
+  </Card>
+  <Card title="STM32 Nucleo" icon="microchip">
+    Serial-connected microcontrollers (Nucleo-F401RE, etc.)
+  </Card>
+  <Card title="Arduino" icon="microchip">
+    Arduino Uno and compatible boards
+  </Card>
+  <Card title="Arduino Uno Q" icon="wifi">
+    WiFi-connected Arduino via Bridge app
+  </Card>
+</CardGroup>
+
+## Step-by-Step Setup
+
+<Steps>
+
+### Enable Hardware Feature
+
+Build with hardware support:
+
+```bash
+cargo build --features hardware
+```
+
+For Raspberry Pi GPIO:
+
+```bash
+cargo build --features "hardware,peripheral-rpi"
+```
+
+### Configure Peripherals
+
+Add peripherals to `config.toml`:
+
+```toml
+[peripherals]
+enabled = true
+
+# Raspberry Pi GPIO (native)
+[[peripherals.boards]]
+board = "rpi-gpio"
+transport = "native"
+
+# STM32 Nucleo over serial
+[[peripherals.boards]]
+board = "nucleo-f401re"
+transport = "serial"
+path = "/dev/ttyACM0"
+baud = 115200
+
+# Arduino Uno over serial
+[[peripherals.boards]]
+board = "arduino-uno"
+transport = "serial"
+path = "/dev/ttyUSB0"
+baud = 115200
+
+# Arduino Uno Q over WiFi bridge
+[[peripherals.boards]]
+board = "uno-q"
+transport = "bridge"
+```
+
+### Flash Firmware (for microcontrollers)
+
+For Arduino:
+
+```bash
+zeroclaw peripheral flash --port /dev/ttyUSB0
+```
+
+For STM32 Nucleo:
+
+```bash
+zeroclaw peripheral flash-nucleo
+```
+
+### Verify Connection
+
+List configured peripherals:
+
+```bash
+zeroclaw peripheral list
+```
+
+Output:
+```
+Configured peripherals:
+  rpi-gpio      native    (native)
+  nucleo-f401re serial    /dev/ttyACM0
+  arduino-uno   serial    /dev/ttyUSB0
+```
+
+### Use Hardware Tools
+
+Start the agent and use hardware capabilities:
+
+```bash
+zeroclaw chat "Turn on GPIO pin 17"
+zeroclaw chat "Read the value from GPIO pin 27"
+```
+
+</Steps>
+
+## Raspberry Pi GPIO Example
+
+Here's how the Raspberry Pi GPIO peripheral is implemented (`src/peripherals/rpi.rs`):
+
+```rust
+use crate::peripherals::traits::Peripheral;
+use crate::tools::{Tool, ToolResult};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+
+pub struct RpiGpioPeripheral {
+    board: PeripheralBoardConfig,
+}
+
+impl RpiGpioPeripheral {
+    pub fn new(board: PeripheralBoardConfig) -> Self {
+        Self { board }
+    }
+
+    pub async fn connect_from_config(board: &PeripheralBoardConfig) -> Result<Self> {
+        let mut peripheral = Self::new(board.clone());
+        peripheral.connect().await?;
+        Ok(peripheral)
+    }
+}
+
+#[async_trait]
+impl Peripheral for RpiGpioPeripheral {
+    fn name(&self) -> &str {
+        &self.board.board
+    }
+
+    fn board_type(&self) -> &str {
+        "rpi-gpio"
+    }
+
+    async fn connect(&mut self) -> Result<()> {
+        // Verify GPIO is accessible
+        let result = tokio::task::spawn_blocking(|| rppal::gpio::Gpio::new()).await??;
+        drop(result);
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn health_check(&self) -> bool {
+        tokio::task::spawn_blocking(|| rppal::gpio::Gpio::new().is_ok())
+            .await
+            .unwrap_or(false)
+    }
+
+    fn tools(&self) -> Vec<Box<dyn Tool>> {
+        vec![
+            Box::new(RpiGpioReadTool),
+            Box::new(RpiGpioWriteTool),
+        ]
+    }
+}
+```
+
+### GPIO Read Tool
+
+```rust
+struct RpiGpioReadTool;
+
+#[async_trait]
+impl Tool for RpiGpioReadTool {
+    fn name(&self) -> &str {
+        "gpio_read"
+    }
+
+    fn description(&self) -> &str {
+        "Read the value (0 or 1) of a GPIO pin on Raspberry Pi. Uses BCM pin numbers (e.g. 17, 27)."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "pin": {
+                    "type": "integer",
+                    "description": "BCM GPIO pin number (e.g. 17, 27)"
+                }
+            },
+            "required": ["pin"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let pin = args
+            .get("pin")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'pin' parameter"))?;
+        let pin_u8 = pin as u8;
+
+        let value = tokio::task::spawn_blocking(move || {
+            let gpio = rppal::gpio::Gpio::new()?;
+            let pin = gpio.get(pin_u8)?.into_input();
+            Ok::<_, anyhow::Error>(match pin.read() {
+                rppal::gpio::Level::Low => 0,
+                rppal::gpio::Level::High => 1,
+            })
+        })
+        .await??;
+
+        Ok(ToolResult {
+            success: true,
+            output: format!("pin {} = {}", pin, value),
+            error: None,
+        })
+    }
+}
+```
+
+### GPIO Write Tool
+
+```rust
+struct RpiGpioWriteTool;
+
+#[async_trait]
+impl Tool for RpiGpioWriteTool {
+    fn name(&self) -> &str {
+        "gpio_write"
+    }
+
+    fn description(&self) -> &str {
+        "Set a GPIO pin high (1) or low (0) on Raspberry Pi. Uses BCM pin numbers."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "pin": {
+                    "type": "integer",
+                    "description": "BCM GPIO pin number"
+                },
+                "value": {
+                    "type": "integer",
+                    "description": "0 for low, 1 for high"
+                }
+            },
+            "required": ["pin", "value"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let pin = args
+            .get("pin")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'pin' parameter"))?;
+        let value = args
+            .get("value")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'value' parameter"))?;
+        let pin_u8 = pin as u8;
+        let level = match value {
+            0 => rppal::gpio::Level::Low,
+            _ => rppal::gpio::Level::High,
+        };
+
+        tokio::task::spawn_blocking(move || {
+            let gpio = rppal::gpio::Gpio::new()?;
+            let mut pin = gpio.get(pin_u8)?.into_output();
+            pin.write(level);
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
+
+        Ok(ToolResult {
+            success: true,
+            output: format!("pin {} = {}", pin, value),
+            error: None,
+        })
+    }
+}
+```
+
+## Serial Peripheral Communication
+
+For STM32 and Arduino boards, ZeroClaw uses a serial protocol to communicate with firmware:
+
+### Protocol Format
+
+Commands are JSON-based over serial:
+
+```json
+{"cmd": "gpio_read", "pin": 13}
+{"cmd": "gpio_write", "pin": 13, "value": 1}
+{"cmd": "capabilities"}
+```
+
+Responses:
+
+```json
+{"ok": true, "value": 1}
+{"ok": false, "error": "Invalid pin"}
+{"capabilities": ["gpio_read", "gpio_write", "analog_read"]}
+```
+
+### Serial Transport
+
+From `src/peripherals/serial.rs`:
+
+```rust
+pub struct SerialTransport {
+    port: Arc<Mutex<Box<dyn serialport::SerialPort>>>,
+}
+
+impl SerialTransport {
+    pub fn new(path: &str, baud: u32) -> Result<Self> {
+        let port = serialport::new(path, baud)
+            .timeout(Duration::from_secs(2))
+            .open()?;
+        
+        Ok(Self {
+            port: Arc::new(Mutex::new(port)),
+        })
+    }
+
+    pub async fn send_command(&self, cmd: &str) -> Result<String> {
+        let mut port = self.port.lock().await;
+        
+        // Send command
+        port.write_all(cmd.as_bytes())?;
+        port.write_all(b"\n")?;
+        port.flush()?;
+        
+        // Read response
+        let mut buffer = Vec::new();
+        let mut byte = [0u8; 1];
+        
+        loop {
+            port.read_exact(&mut byte)?;
+            if byte[0] == b'\n' {
+                break;
+            }
+            buffer.push(byte[0]);
+        }
+        
+        Ok(String::from_utf8(buffer)?)
+    }
+}
+```
+
+## Arduino Uno Q (WiFi Bridge)
+
+For wireless control, use the Arduino Uno Q Bridge:
+
+### Setup Bridge
+
+```bash
+zeroclaw peripheral setup-uno-q --host "192.168.1.100"
+```
+
+This configures the Bridge app to forward commands to the Arduino.
+
+### Bridge Configuration
+
+```toml
+[[peripherals.boards]]
+board = "uno-q"
+transport = "bridge"
+```
+
+The bridge exposes the same GPIO tools but communicates over HTTP instead of serial.
+
+## Creating Custom Peripherals
+
+<Steps>
+
+### Implement the Peripheral Trait
+
+```rust
+use crate::peripherals::traits::Peripheral;
+use crate::tools::{Tool, ToolResult};
+use async_trait::async_trait;
+
+pub struct MyCustomPeripheral {
+    device_path: String,
+    connected: bool,
+}
+
+impl MyCustomPeripheral {
+    pub fn new(device_path: String) -> Self {
+        Self {
+            device_path,
+            connected: false,
+        }
+    }
+}
+
+#[async_trait]
+impl Peripheral for MyCustomPeripheral {
+    fn name(&self) -> &str {
+        "my-custom-peripheral"
+    }
+
+    fn board_type(&self) -> &str {
+        "custom"
+    }
+
+    async fn connect(&mut self) -> Result<()> {
+        // Initialize your hardware connection
+        self.connected = true;
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<()> {
+        self.connected = false;
+        Ok(())
+    }
+
+    async fn health_check(&self) -> bool {
+        self.connected
+    }
+
+    fn tools(&self) -> Vec<Box<dyn Tool>> {
+        vec![
+            Box::new(MyCustomTool),
+        ]
+    }
+}
+```
+
+### Create Hardware Tools
+
+```rust
+struct MyCustomTool;
+
+#[async_trait]
+impl Tool for MyCustomTool {
+    fn name(&self) -> &str {
+        "custom_sensor_read"
+    }
+
+    fn description(&self) -> &str {
+        "Read data from custom sensor"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "sensor_id": {
+                    "type": "integer",
+                    "description": "Sensor ID (0-7)"
+                }
+            },
+            "required": ["sensor_id"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let sensor_id = args["sensor_id"].as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Missing sensor_id"))?;
+        
+        // Read from your hardware
+        let value = read_sensor(sensor_id as u8).await?;
+        
+        Ok(ToolResult {
+            success: true,
+            output: format!("Sensor {} = {}", sensor_id, value),
+            error: None,
+        })
+    }
+}
+```
+
+### Register in Factory
+
+Add to `src/peripherals/mod.rs`:
+
+```rust
+pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<Box<dyn Tool>>> {
+    let mut tools = Vec::new();
+    
+    for board in &config.boards {
+        if board.board == "my-custom" {
+            let peripheral = MyCustomPeripheral::new(board.path.clone());
+            tools.extend(peripheral.tools());
+        }
+    }
+    
+    Ok(tools)
+}
+```
+
+</Steps>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use appropriate transports">
+    - **Serial**: STM32, Arduino, ESP32 (reliable, wired)
+    - **Native**: Raspberry Pi GPIO (fastest, direct access)
+    - **Bridge/Network**: Wireless devices (flexible, may have latency)
+  </Accordion>
+
+  <Accordion title="Handle connection failures gracefully">
+    ```rust
+    async fn connect(&mut self) -> Result<()> {
+        for attempt in 1..=3 {
+            match self.try_connect().await {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < 3 => {
+                    tracing::warn!("Connection attempt {attempt} failed: {e}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Validate pin numbers and ranges">
+    ```rust
+    if pin > 40 {
+        return Ok(ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some(format!("Invalid pin: {pin} (must be 0-40)")),
+        });
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use blocking tasks for synchronous hardware APIs">
+    ```rust
+    // GPIO libraries are often blocking
+    let value = tokio::task::spawn_blocking(move || {
+        let gpio = rppal::gpio::Gpio::new()?;
+        let pin = gpio.get(pin_num)?;
+        Ok(pin.read())
+    }).await??;
+    ```
+  </Accordion>
+
+  <Accordion title="Add firmware version checks">
+    ```rust
+    async fn connect(&mut self) -> Result<()> {
+        let version = self.query_firmware_version().await?;
+        
+        if version < MINIMUM_FIRMWARE_VERSION {
+            anyhow::bail!(
+                "Firmware too old: {version}. Please flash version {MINIMUM_FIRMWARE_VERSION} or later."
+            );
+        }
+        
+        Ok(())
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Permission denied on /dev/ttyACM0 or /dev/ttyUSB0">
+    Add your user to the `dialout` group:
+    
+    ```bash
+    sudo usermod -a -G dialout $USER
+    # Log out and back in
+    ```
+  </Accordion>
+
+  <Accordion title="GPIO access denied on Raspberry Pi">
+    Run with appropriate permissions or add user to gpio group:
+    
+    ```bash
+    sudo usermod -a -G gpio $USER
+    ```
+  </Accordion>
+
+  <Accordion title="Serial communication hangs">
+    Check baud rate, connection, and firmware:
+    
+    ```bash
+    # Test serial connection
+    screen /dev/ttyACM0 115200
+    
+    # Send test command
+    {"cmd":"capabilities"}
+    ```
+  </Accordion>
+
+  <Accordion title="Firmware not responding after flash">
+    Press reset button on the board after flashing:
+    
+    ```bash
+    zeroclaw peripheral flash --port /dev/ttyUSB0
+    # Press reset button on Arduino
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Tools" icon="wrench" href="/guides/creating-tools">
+    Learn how to create custom tools
+  </Card>
+  <Card title="Gateway Setup" icon="server" href="/guides/gateway-setup">
+    Expose your agent via HTTP
+  </Card>
+</CardGroup>

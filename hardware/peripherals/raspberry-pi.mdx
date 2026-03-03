@@ -1,0 +1,344 @@
+---
+title: Raspberry Pi Setup
+description: Set up Raspberry Pi GPIO with ZeroClaw
+---
+
+# Raspberry Pi Setup
+
+Raspberry Pi boards can run ZeroClaw natively with direct GPIO access—no firmware flashing required. This makes them ideal for edge-native AI agents and autonomous robots.
+
+## Supported Models
+
+| Model | RAM | Architecture | Status | Use Case |
+|-------|-----|--------------|--------|----------|
+| **Raspberry Pi 5** | 4GB / 8GB | ARM Cortex-A76 | ✅ Recommended | Production robots, Ollama |
+| **Raspberry Pi 4** | 4GB / 8GB | ARM Cortex-A72 | ✅ Stable | General use |
+| **Raspberry Pi 3 B+** | 1GB | ARM Cortex-A53 | ✅ Stable | Light workloads |
+| **Raspberry Pi Zero 2 W** | 512MB | ARM Cortex-A53 | ✅ Stable | Constrained devices |
+| **Raspberry Pi Zero W** | 512MB | ARMv6 | ✅ Special build | Ultra-minimal |
+
+## Quick Start
+
+### 1. Build with GPIO Support
+
+```bash
+cd ~/zeroclaw
+
+# Enable peripheral-rpi feature
+cargo build --release --features peripheral-rpi
+
+# Install binary
+sudo cp target/release/zeroclaw /usr/local/bin/
+zeroclaw --version
+```
+
+### 2. Configure GPIO Peripheral
+
+```bash
+# Add GPIO peripheral
+zeroclaw peripheral add rpi-gpio native
+
+# Or manually edit ~/.zeroclaw/config.toml
+```
+
+```toml
+[peripherals]
+enabled = true
+
+[[peripherals.boards]]
+board = "rpi-gpio"
+transport = "native"  # No serial port needed
+```
+
+### 3. Set Up Permissions
+
+```bash
+# Add user to gpio group
+sudo usermod -aG gpio $USER
+
+# Logout and login for group change to take effect
+```
+
+### 4. Test GPIO
+
+```bash
+# Test GPIO read
+zeroclaw agent -m "Read GPIO pin 17"
+
+# Test GPIO write (LED on pin 18)
+zeroclaw agent -m "Set GPIO pin 18 high"
+```
+
+## GPIO Pin Reference
+
+### 40-Pin Header (BCM Numbering)
+
+ZeroClaw uses **BCM pin numbering**, not physical pin numbers.
+
+```
+     3V3  (1)  (2)  5V
+   GPIO2  (3)  (4)  5V
+   GPIO3  (5)  (6)  GND
+   GPIO4  (7)  (8)  GPIO14
+     GND  (9) (10)  GPIO15
+  GPIO17 (11) (12)  GPIO18
+  GPIO27 (13) (14)  GND
+  GPIO22 (15) (16)  GPIO23
+     3V3 (17) (18)  GPIO24
+  GPIO10 (19) (20)  GND
+   GPIO9 (21) (22)  GPIO25
+  GPIO11 (23) (24)  GPIO8
+     GND (25) (26)  GPIO7
+   GPIO0 (27) (28)  GPIO1
+   GPIO5 (29) (30)  GND
+   GPIO6 (31) (32)  GPIO12
+  GPIO13 (33) (34)  GND
+  GPIO19 (35) (36)  GPIO16
+  GPIO26 (37) (38)  GPIO20
+     GND (39) (40)  GPIO21
+```
+
+### Common Pins
+
+| Function | BCM Pins | Notes |
+|----------|----------|-------|
+| **General GPIO** | 2-27 (except special) | Any digital I/O |
+| **I2C** | GPIO 2 (SDA), GPIO 3 (SCL) | Default I2C bus |
+| **SPI** | GPIO 9 (MISO), GPIO 10 (MOSI), GPIO 11 (SCLK) | Hardware SPI0 |
+| **PWM** | GPIO 12, 13, 18, 19 | Hardware PWM |
+| **UART** | GPIO 14 (TX), GPIO 15 (RX) | Serial console |
+
+<Warning>
+**Do not use:**
+- GPIO 0, 1: Reserved for HAT EEPROM
+- GPIO 14, 15: Serial console (unless disabled)
+- 5V or 3.3V pins: Power only, not GPIO
+</Warning>
+
+## Wiring Examples
+
+### LED Blink
+
+```
+Raspberry Pi         LED
+────────────         ───
+GPIO 18 ─────────┬──▶│
+                 │    └─── GND
+                 └─── 220Ω resistor
+```
+
+```bash
+# Turn LED on
+zeroclaw agent -m "Set GPIO 18 high"
+
+# Turn LED off
+zeroclaw agent -m "Set GPIO 18 low"
+```
+
+### Button Input
+
+```
+Raspberry Pi         Button
+────────────         ──────
+GPIO 17 ─────────────┤  ├──── 3.3V
+GND ─────────────────┤  ├
+                     └──┘
+```
+
+```bash
+# Read button state
+zeroclaw agent -m "Read GPIO pin 17"
+```
+
+### Motor Controller (L298N)
+
+```
+Raspberry Pi         L298N Motor Driver
+────────────         ──────────────────
+GPIO 12 (PWM) ──────▶ ENA
+GPIO 17 ────────────▶ IN1
+GPIO 27 ────────────▶ IN2
+GPIO 13 (PWM) ──────▶ ENB
+GPIO 22 ────────────▶ IN3
+GPIO 23 ────────────▶ IN4
+GND ────────────────── GND
+5V (from battery) ──── 12V (motor power)
+```
+
+## Building on Raspberry Pi Zero W
+
+The Pi Zero W (512MB RAM, ARMv6) requires special consideration:
+
+### Add Swap Space
+
+```bash
+# Create 2GB swap file (mandatory for compilation)
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# Make persistent
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### Install Dependencies
+
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libssl-dev git curl
+```
+
+### Install Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+### Build for musleabihf (Recommended)
+
+```bash
+# Add musl target
+rustup target add armv6l-unknown-linux-musleabihf
+
+# Build (takes 30-60 minutes)
+export CARGO_BUILD_JOBS=1
+cargo build --release --target armv6l-unknown-linux-musleabihf --features peripheral-rpi
+
+# Install
+sudo cp target/armv6l-unknown-linux-musleabihf/release/zeroclaw /usr/local/bin/
+```
+
+<Note>
+**Cross-compilation from a faster machine is highly recommended.** See the [Raspberry Pi Zero W Build Guide](https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/hardware/raspberry-pi-zero-w-build.md) for details.
+</Note>
+
+## GPIO Tools
+
+ZeroClaw exposes these GPIO tools to agents:
+
+### `gpio_read`
+
+Read the value (0 or 1) of a GPIO pin.
+
+**Parameters:**
+- `pin` (integer): BCM GPIO pin number (2-27)
+
+**Example:**
+```bash
+zeroclaw agent -m "What is the value of GPIO 17?"
+```
+
+### `gpio_write`
+
+Set a GPIO pin high (1) or low (0).
+
+**Parameters:**
+- `pin` (integer): BCM GPIO pin number
+- `value` (integer): 0 for LOW, 1 for HIGH
+
+**Example:**
+```bash
+zeroclaw agent -m "Set GPIO 18 to high"
+```
+
+## Robot Kit Integration
+
+For building autonomous robots on Raspberry Pi, see the [Robot Kit](/hardware/robot-kit/overview) documentation.
+
+**Key features:**
+- Local Ollama for offline AI
+- Camera vision (moondream)
+- Speech (Whisper + Piper)
+- Motor control via GPIO
+- LIDAR obstacle avoidance
+
+## Troubleshooting
+
+### "Permission denied" when accessing GPIO
+
+```bash
+# Check groups
+groups
+
+# Add to gpio group
+sudo usermod -aG gpio $USER
+
+# Logout and login
+```
+
+### "Failed to connect RPi GPIO"
+
+```bash
+# Verify rppal works
+python3 << EOF
+import RPi.GPIO as GPIO
+GPIO.setmode(GPIO.BCM)
+print("GPIO OK")
+GPIO.cleanup()
+EOF
+
+# Ensure feature is enabled
+cargo build --features peripheral-rpi
+```
+
+### Pin already in use
+
+```bash
+# Check what's using GPIO
+sudo lsof | grep gpiochip
+
+# Kill process or reboot
+```
+
+### Build fails on Pi Zero W
+
+```bash
+# Check swap is active
+free -h
+
+# Increase swap to 4GB if needed
+sudo swapoff /swapfile
+sudo rm /swapfile
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+## Performance Tips
+
+1. **Use NVMe on Pi 5**: Much faster than SD cards
+2. **Active cooling**: Prevents thermal throttling
+3. **Overclock (optional)**: Add to `/boot/config.txt`:
+   ```
+   arm_freq=2000  # Pi 5
+   over_voltage=6
+   ```
+4. **Disable desktop**: Use Raspberry Pi OS Lite
+5. **Static build**: Use musleabihf target for smaller binaries
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Robot Kit Setup" icon="robot" href="/hardware/robot-kit/setup">
+    Build an autonomous robot on Pi
+  </Card>
+  <Card title="Supported Boards" icon="microchip" href="/hardware/supported-boards">
+    Compare all hardware platforms
+  </Card>
+  <Card title="Hardware Architecture" icon="diagram-project" href="/architecture/hardware-peripherals-design">
+    Understand the peripheral system
+  </Card>
+  <Card title="Robot Kit API" icon="code" href="/hardware/robot-kit/api">
+    API reference for robot tools
+  </Card>
+</CardGroup>
+
+## Reference
+
+- [Raspberry Pi GPIO Pinout](https://pinout.xyz/)
+- [rppal Documentation](https://docs.rs/rppal/)
+- [Raspberry Pi Zero W Build Guide](/hardware/raspberry-pi-zero-w-build)
+- [Hardware Peripherals Design](/architecture/hardware-peripherals-design)

@@ -1,0 +1,282 @@
+---
+title: zeroclaw gateway
+description: Start the HTTP/WebSocket gateway server for webhooks and remote connections
+---
+
+## Overview
+
+The `zeroclaw gateway` command starts the HTTP/WebSocket gateway server that accepts:
+
+- **Webhook events** from external services
+- **WebSocket connections** for real-time communication
+- **API requests** for programmatic control
+
+The gateway enables remote interaction with your ZeroClaw agent through various channels.
+
+## Basic Usage
+
+```bash
+# Start with config defaults
+zeroclaw gateway
+
+# Start on specific port
+zeroclaw gateway -p 8080
+
+# Bind to all interfaces
+zeroclaw gateway --host 0.0.0.0
+```
+
+## Command Syntax
+
+```bash
+zeroclaw gateway [OPTIONS]
+```
+
+## Options
+
+<ParamField path="-p, --port" type="integer">
+  Port to listen on. Use `0` for random available port. Defaults to `gateway.port` in config (typically 8585).
+</ParamField>
+
+<ParamField path="--host" type="string">
+  Host address to bind to. Defaults to `gateway.host` in config (typically 127.0.0.1).
+  
+  **Common values:**
+  - `127.0.0.1` - Localhost only (secure default)
+  - `0.0.0.0` - All interfaces (public access)
+  - Specific IP - Bind to specific network interface
+</ParamField>
+
+<ParamField path="--new-pairing" type="boolean">
+  Clear all paired tokens and generate a fresh pairing code. Use this to reset gateway authentication.
+</ParamField>
+
+## Examples
+
+### Basic Gateway
+
+```bash
+# Use config defaults (127.0.0.1:8585)
+zeroclaw gateway
+
+# Specific port
+zeroclaw gateway -p 8080
+
+# Random available port
+zeroclaw gateway -p 0
+```
+
+### Network Configuration
+
+```bash
+# Localhost only (secure default)
+zeroclaw gateway --host 127.0.0.1 -p 8585
+
+# Accept connections from local network
+zeroclaw gateway --host 0.0.0.0 -p 8585
+
+# Bind to specific interface
+zeroclaw gateway --host 192.168.1.100 -p 8585
+```
+
+### Security Operations
+
+```bash
+# Generate new pairing code
+zeroclaw gateway --new-pairing
+
+# Reset tokens and start fresh
+zeroclaw gateway --new-pairing -p 8080
+```
+
+## Terminal Output
+
+```bash
+$ zeroclaw gateway
+🚀 Starting ZeroClaw Gateway on 127.0.0.1:8585
+
+🔐 Pairing Code: WXYZ-1234-ABCD
+   Use this code to authenticate new clients
+   Valid for: 15 minutes
+
+✓ Gateway server started
+  HTTP:  http://127.0.0.1:8585
+  WebSocket: ws://127.0.0.1:8585/ws
+
+📡 Listening for webhook events...
+```
+
+### With New Pairing
+
+```bash
+$ zeroclaw gateway --new-pairing
+🔐 Cleared paired tokens — a fresh pairing code will be generated
+🚀 Starting ZeroClaw Gateway on 127.0.0.1:8585
+
+🔐 New Pairing Code: EFGH-5678-IJKL
+   Use this code to authenticate new clients
+   Valid for: 15 minutes
+
+✓ Gateway server started
+```
+
+### Random Port
+
+```bash
+$ zeroclaw gateway -p 0
+🚀 Starting ZeroClaw Gateway on 127.0.0.1 (random port)
+
+✓ Gateway server started on port: 54321
+  HTTP:  http://127.0.0.1:54321
+  WebSocket: ws://127.0.0.1:54321/ws
+
+🔐 Pairing Code: MNOP-9012-QRST
+```
+
+## Gateway Features
+
+### HTTP Endpoints
+
+The gateway exposes these HTTP endpoints:
+
+- `POST /webhook` - Receive webhook events
+- `POST /api/message` - Send messages to agent
+- `GET /api/status` - Gateway health check
+- `GET /health` - System health status
+
+### WebSocket Protocol
+
+Connect to `/ws` for real-time bidirectional communication:
+
+```javascript
+const ws = new WebSocket('ws://127.0.0.1:8585/ws');
+
+ws.on('open', () => {
+  ws.send(JSON.stringify({
+    type: 'message',
+    content: 'Hello from client',
+    token: 'your-pairing-token'
+  }));
+});
+
+ws.on('message', (data) => {
+  const response = JSON.parse(data);
+  console.log('Agent response:', response);
+});
+```
+
+### Security Features
+
+- **Pairing codes** - Time-limited codes for client authentication
+- **Token-based auth** - Paired tokens for ongoing sessions
+- **Request limits** - 64KB max request body size
+- **Timeouts** - 30s request timeout to prevent slow-loris attacks
+- **Rate limiting** - Per-client rate limits (60s sliding window)
+- **Idempotency** - Duplicate request detection
+
+## Configuration
+
+Gateway settings in `config.toml`:
+
+```toml
+[gateway]
+host = "127.0.0.1"  # Bind address
+port = 8585          # Listen port
+paired_tokens = []   # Authenticated tokens (managed automatically)
+
+[gateway.rate_limit]
+enabled = true
+max_requests_per_window = 60
+window_seconds = 60
+max_tracked_keys = 10000
+
+[gateway.idempotency]
+enabled = true
+max_keys = 10000
+```
+
+## Integration with Channels
+
+The gateway works with various channel integrations:
+
+- **WhatsApp** - Webhook endpoint for WhatsApp Business API
+- **GitHub** - Webhook receiver for repository events
+- **Custom webhooks** - Generic webhook receiver for any service
+
+## Security Best Practices
+
+<Warning>
+  **Never bind to 0.0.0.0 on public servers without additional security** (firewall rules, reverse proxy, VPN).
+</Warning>
+
+### Recommended Setup
+
+1. **Local development**: Use default `127.0.0.1`
+2. **Remote access**: Use SSH tunnel or VPN
+3. **Production**: Place behind reverse proxy (nginx, Caddy) with TLS
+
+### Pairing Token Management
+
+```bash
+# Rotate tokens periodically
+zeroclaw gateway --new-pairing
+
+# Monitor paired tokens in config
+zeroclaw config get gateway.paired_tokens
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+```bash
+# Check what's using the port
+lsof -i :8585
+
+# Use different port
+zeroclaw gateway -p 9090
+
+# Or use random port
+zeroclaw gateway -p 0
+```
+
+### Can't Connect from Remote Host
+
+```bash
+# Check current binding
+zeroclaw config get gateway.host
+
+# Bind to all interfaces (be careful!)
+zeroclaw gateway --host 0.0.0.0
+
+# Better: Use SSH tunnel
+ssh -L 8585:localhost:8585 user@remote-host
+```
+
+### Pairing Code Expired
+
+```bash
+# Pairing codes expire after 15 minutes
+# Restart gateway to generate new code
+zeroclaw gateway --new-pairing
+```
+
+## Exit Codes
+
+- `0` - Success (gateway stopped gracefully)
+- `1` - Startup error (port in use, permission denied)
+- `2` - Configuration error
+- `130` - Interrupted (Ctrl+C)
+
+## Related Commands
+
+- [`zeroclaw daemon`](/api/commands/daemon) - Run gateway + channels + scheduler together
+- [`zeroclaw config`](/api/commands/config) - Manage gateway configuration
+- [`zeroclaw channel`](/api/channels) - Configure channel integrations
+
+## See Also
+
+- [Gateway Setup Guide](/guides/gateway-setup)
+- [Channel Configuration](/api/channels)
+- [Security Configuration](/operations/security-best-practices)
+- [Deployment Guide](/guides/deployment)

@@ -1,0 +1,631 @@
+---
+title: Creating Custom Memory Backends
+description: Learn how to implement custom memory storage backends for ZeroClaw
+---
+
+ZeroClaw's memory system is pluggable — you can implement any storage backend from Redis to PostgreSQL. The `Memory` trait provides a simple async interface for storing and recalling agent memories.
+
+## Overview
+
+Memory backends implement the `Memory` trait:
+
+```rust
+#[async_trait]
+pub trait Memory: Send + Sync {
+    fn name(&self) -> &str;
+    async fn store(&self, key: &str, content: &str, category: MemoryCategory) -> Result<()>;
+    async fn recall(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>>;
+    async fn get(&self, key: &str) -> Result<Option<MemoryEntry>>;
+    async fn forget(&self, key: &str) -> Result<bool>;
+    async fn count(&self) -> Result<usize>;
+}
+```
+
+## Step-by-Step Guide
+
+<Steps>
+
+### Define Your Memory Backend
+
+Create a new module in `src/memory/`:
+
+```rust
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use crate::memory::traits::{Memory, MemoryEntry, MemoryCategory};
+
+/// In-memory HashMap backend (great for testing or ephemeral sessions)
+pub struct InMemoryBackend {
+    store: Mutex<HashMap<String, MemoryEntry>>,
+}
+
+impl Default for InMemoryBackend {
+    fn default() -> Self {
+        Self {
+            store: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl InMemoryBackend {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+```
+
+### Implement the Memory Trait
+
+#### Name
+
+Return a unique identifier:
+
+```rust
+fn name(&self) -> &str {
+    "in-memory"
+}
+```
+
+#### Store
+
+Save a memory entry:
+
+```rust
+async fn store(
+    &self,
+    key: &str,
+    content: &str,
+    category: MemoryCategory,
+) -> anyhow::Result<()> {
+    let entry = MemoryEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        key: key.to_string(),
+        content: content.to_string(),
+        category,
+        timestamp: chrono::Local::now().to_rfc3339(),
+        score: None,
+    };
+    
+    self.store
+        .lock()
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .insert(key.to_string(), entry);
+    
+    Ok(())
+}
+```
+
+#### Recall
+
+Search for memories:
+
+```rust
+async fn recall(&self, query: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+    let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let query_lower = query.to_lowercase();
+
+    let mut results: Vec<MemoryEntry> = store
+        .values()
+        .filter(|e| e.content.to_lowercase().contains(&query_lower))
+        .cloned()
+        .collect();
+
+    results.truncate(limit);
+    Ok(results)
+}
+```
+
+#### Get
+
+Retrieve by key:
+
+```rust
+async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+    let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(store.get(key).cloned())
+}
+```
+
+#### Forget
+
+Delete a memory:
+
+```rust
+async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+    let mut store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(store.remove(key).is_some())
+}
+```
+
+#### Count
+
+Return total entries:
+
+```rust
+async fn count(&self) -> anyhow::Result<usize> {
+    let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(store.len())
+}
+```
+
+### Register Your Backend
+
+Add factory logic in `src/memory/mod.rs`:
+
+```rust
+pub fn create_memory(backend: &str) -> Result<Box<dyn Memory>> {
+    match backend {
+        "markdown" => Ok(Box::new(MarkdownMemory::new())),
+        "sqlite" => Ok(Box::new(SqliteMemory::new())),
+        "in-memory" => Ok(Box::new(InMemoryBackend::new())),
+        _ => anyhow::bail!("Unknown memory backend: {}", backend),
+    }
+}
+```
+
+### Configure and Test
+
+Add to `config.toml`:
+
+```toml
+[memory]
+backend = "in-memory"
+auto_save = true
+```
+
+Test your backend:
+
+```bash
+zeroclaw memory store user_lang "User prefers Rust" --category core
+zeroclaw memory recall "Rust"
+zeroclaw memory forget user_lang
+```
+
+</Steps>
+
+## Complete Example
+
+Here's the full implementation from `examples/custom_memory.rs`:
+
+```rust
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MemoryCategory {
+    Core,
+    Daily,
+    Conversation,
+    Custom(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEntry {
+    pub id: String,
+    pub key: String,
+    pub content: String,
+    pub category: MemoryCategory,
+    pub timestamp: String,
+    pub score: Option<f64>,
+}
+
+#[async_trait]
+pub trait Memory: Send + Sync {
+    fn name(&self) -> &str;
+    async fn store(&self, key: &str, content: &str, category: MemoryCategory) -> anyhow::Result<()>;
+    async fn recall(&self, query: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>>;
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+    async fn count(&self) -> anyhow::Result<usize>;
+}
+
+pub struct InMemoryBackend {
+    store: Mutex<HashMap<String, MemoryEntry>>,
+}
+
+impl Default for InMemoryBackend {
+    fn default() -> Self {
+        Self {
+            store: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl InMemoryBackend {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait]
+impl Memory for InMemoryBackend {
+    fn name(&self) -> &str {
+        "in-memory"
+    }
+
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+    ) -> anyhow::Result<()> {
+        let entry = MemoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            content: content.to_string(),
+            category,
+            timestamp: chrono::Local::now().to_rfc3339(),
+            score: None,
+        };
+        self.store
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .insert(key.to_string(), entry);
+        Ok(())
+    }
+
+    async fn recall(&self, query: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let query_lower = query.to_lowercase();
+
+        let mut results: Vec<MemoryEntry> = store
+            .values()
+            .filter(|e| e.content.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect();
+
+        results.truncate(limit);
+        Ok(results)
+    }
+
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(store.get(key).cloned())
+    }
+
+    async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+        let mut store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(store.remove(key).is_some())
+    }
+
+    async fn count(&self) -> anyhow::Result<usize> {
+        let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(store.len())
+    }
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let brain = InMemoryBackend::new();
+
+    println!("🧠 ZeroClaw Memory Demo — InMemoryBackend\n");
+
+    // Store some memories
+    brain
+        .store("user_lang", "User prefers Rust", MemoryCategory::Core)
+        .await?;
+    brain
+        .store("user_tz", "Timezone is EST", MemoryCategory::Core)
+        .await?;
+    brain
+        .store(
+            "today_note",
+            "Completed memory system implementation",
+            MemoryCategory::Daily,
+        )
+        .await?;
+
+    println!("Stored {} memories", brain.count().await?);
+
+    // Recall by keyword
+    let results = brain.recall("Rust", 5).await?;
+    println!("\nRecall 'Rust' → {} results:", results.len());
+    for entry in &results {
+        println!("  [{:?}] {}: {}", entry.category, entry.key, entry.content);
+    }
+
+    // Get by key
+    if let Some(entry) = brain.get("user_tz").await? {
+        println!("\nGet 'user_tz' → {}", entry.content);
+    }
+
+    // Forget
+    let removed = brain.forget("user_tz").await?;
+    println!("Forget 'user_tz' → removed: {removed}");
+    println!("Remaining: {} memories", brain.count().await?);
+
+    println!("\n✅ Memory backend works! Implement the Memory trait for any storage.");
+    Ok(())
+}
+```
+
+## Advanced Backends
+
+### Redis Backend
+
+```rust
+use redis::{Client, AsyncCommands};
+
+pub struct RedisMemory {
+    client: Client,
+}
+
+impl RedisMemory {
+    pub fn new(url: &str) -> Result<Self> {
+        Ok(Self {
+            client: Client::open(url)?,
+        })
+    }
+}
+
+#[async_trait]
+impl Memory for RedisMemory {
+    fn name(&self) -> &str {
+        "redis"
+    }
+
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+    ) -> Result<()> {
+        let mut conn = self.client.get_async_connection().await?;
+        
+        let entry = MemoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            content: content.to_string(),
+            category,
+            timestamp: chrono::Local::now().to_rfc3339(),
+            score: None,
+        };
+        
+        let serialized = serde_json::to_string(&entry)?;
+        conn.set(format!("memory:{key}"), serialized).await?;
+        
+        Ok(())
+    }
+
+    async fn recall(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+        let mut conn = self.client.get_async_connection().await?;
+        let keys: Vec<String> = conn.keys("memory:*").await?;
+        
+        let mut results = Vec::new();
+        for key in keys {
+            let data: String = conn.get(&key).await?;
+            if let Ok(entry) = serde_json::from_str::<MemoryEntry>(&data) {
+                if entry.content.to_lowercase().contains(&query.to_lowercase()) {
+                    results.push(entry);
+                }
+            }
+        }
+        
+        results.truncate(limit);
+        Ok(results)
+    }
+
+    async fn get(&self, key: &str) -> Result<Option<MemoryEntry>> {
+        let mut conn = self.client.get_async_connection().await?;
+        let data: Option<String> = conn.get(format!("memory:{key}")).await?;
+        
+        match data {
+            Some(json) => Ok(serde_json::from_str(&json)?),
+            None => Ok(None),
+        }
+    }
+
+    async fn forget(&self, key: &str) -> Result<bool> {
+        let mut conn = self.client.get_async_connection().await?;
+        let deleted: i32 = conn.del(format!("memory:{key}")).await?;
+        Ok(deleted > 0)
+    }
+
+    async fn count(&self) -> Result<usize> {
+        let mut conn = self.client.get_async_connection().await?;
+        let keys: Vec<String> = conn.keys("memory:*").await?;
+        Ok(keys.len())
+    }
+}
+```
+
+### PostgreSQL Backend with Vector Search
+
+```rust
+use sqlx::{PgPool, postgres::PgPoolOptions};
+
+pub struct PostgresMemory {
+    pool: PgPool,
+}
+
+impl PostgresMemory {
+    pub async fn new(database_url: &str) -> Result<Self> {
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(database_url)
+            .await?;
+        
+        // Create table with pgvector extension
+        sqlx::query(
+            r#"
+            CREATE EXTENSION IF NOT EXISTS vector;
+            CREATE TABLE IF NOT EXISTS memories (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                key TEXT UNIQUE NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT NOT NULL,
+                timestamp TIMESTAMPTZ DEFAULT NOW(),
+                embedding vector(1536)
+            );
+            CREATE INDEX IF NOT EXISTS memories_embedding_idx 
+                ON memories USING ivfflat (embedding vector_cosine_ops);
+            "#
+        )
+        .execute(&pool)
+        .await?;
+        
+        Ok(Self { pool })
+    }
+}
+
+#[async_trait]
+impl Memory for PostgresMemory {
+    fn name(&self) -> &str {
+        "postgres"
+    }
+
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+    ) -> Result<()> {
+        // Generate embedding (using OpenAI or local model)
+        let embedding = self.generate_embedding(content).await?;
+        
+        sqlx::query(
+            r#"
+            INSERT INTO memories (key, content, category, embedding)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (key) DO UPDATE
+            SET content = EXCLUDED.content,
+                category = EXCLUDED.category,
+                embedding = EXCLUDED.embedding,
+                timestamp = NOW()
+            "#
+        )
+        .bind(key)
+        .bind(content)
+        .bind(serde_json::to_string(&category)?)
+        .bind(&embedding)
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    async fn recall(&self, query: &str, limit: usize) -> Result<Vec<MemoryEntry>> {
+        let query_embedding = self.generate_embedding(query).await?;
+        
+        let rows = sqlx::query_as::<_, (String, String, String, String, f64)>(
+            r#"
+            SELECT id, key, content, category,
+                   1 - (embedding <=> $1) as similarity
+            FROM memories
+            ORDER BY embedding <=> $1
+            LIMIT $2
+            "#
+        )
+        .bind(&query_embedding)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        
+        Ok(rows.into_iter().map(|(id, key, content, category, score)| {
+            MemoryEntry {
+                id,
+                key,
+                content,
+                category: serde_json::from_str(&category).unwrap_or(MemoryCategory::Core),
+                timestamp: chrono::Local::now().to_rfc3339(),
+                score: Some(score),
+            }
+        }).collect())
+    }
+
+    // ... implement get, forget, count
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use connection pooling">
+    Avoid creating new connections for each operation:
+    
+    ```rust
+    use sqlx::PgPool;
+    
+    pub struct DbMemory {
+        pool: PgPool, // Reused across operations
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Implement proper error handling">
+    Return descriptive errors:
+    
+    ```rust
+    async fn store(&self, key: &str, content: &str, category: MemoryCategory) -> Result<()> {
+        self.client
+            .set(key, content)
+            .await
+            .context(format!("Failed to store memory with key: {key}"))?;
+        Ok(())
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Add indexes for search performance">
+    For SQL backends, index searchable fields:
+    
+    ```sql
+    CREATE INDEX idx_memories_content ON memories USING gin(to_tsvector('english', content));
+    CREATE INDEX idx_memories_category ON memories(category);
+    CREATE INDEX idx_memories_timestamp ON memories(timestamp DESC);
+    ```
+  </Accordion>
+
+  <Accordion title="Support batch operations">
+    Optimize for bulk inserts/queries:
+    
+    ```rust
+    pub trait Memory: Send + Sync {
+        async fn store_batch(&self, entries: Vec<(String, String, MemoryCategory)>) -> Result<()>;
+        async fn get_batch(&self, keys: Vec<String>) -> Result<Vec<MemoryEntry>>;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Test with realistic data volumes">
+    Benchmark your backend:
+    
+    ```rust
+    #[tokio::test]
+    async fn bench_recall_performance() {
+        let memory = RedisMemory::new("redis://localhost").unwrap();
+        
+        // Insert 10k memories
+        for i in 0..10_000 {
+            memory.store(
+                &format!("key_{i}"),
+                &format!("content {i}"),
+                MemoryCategory::Daily
+            ).await.unwrap();
+        }
+        
+        let start = std::time::Instant::now();
+        let results = memory.recall("content", 10).await.unwrap();
+        let elapsed = start.elapsed();
+        
+        assert_eq!(results.len(), 10);
+        assert!(elapsed.as_millis() < 100, "Recall too slow: {:?}", elapsed);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gateway Setup" icon="server" href="/guides/gateway-setup">
+    Expose your agent via HTTP gateway
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/guides/deployment">
+    Deploy ZeroClaw to production
+  </Card>
+</CardGroup>

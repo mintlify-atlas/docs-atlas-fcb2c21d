@@ -1,0 +1,512 @@
+---
+title: Slack Channel
+description: Slack API channel with Socket Mode and polling support
+---
+
+# Slack Channel
+
+The Slack channel enables ZeroClaw to communicate via Slack's API with support for both Socket Mode (WebSocket) and polling modes, thread support, and user display name resolution.
+
+## Overview
+
+- **Channel Name**: `slack`
+- **Transport**: Socket Mode (WebSocket) or REST API polling
+- **Authentication**: Bot token (xoxb-) + optional App token (xapp-)
+- **Public Port Required**: No
+- **Supports**: Text messages, threads, channel discovery, display names
+
+## Configuration
+
+### Required Settings
+
+```toml
+[channels_config.slack]
+bot_token = "xoxb-YOUR-BOT-TOKEN"
+allowed_users = ["*"]  # User IDs
+```
+
+### Complete Configuration
+
+```toml
+[channels_config.slack]
+bot_token = "xoxb-YOUR-BOT-TOKEN"
+app_token = "xapp-YOUR-APP-TOKEN"  # Optional: enables Socket Mode
+channel_id = "C1234567890"  # Optional: single channel or "*" for all
+allowed_users = ["U123456789"]  # Slack user IDs
+
+[channels_config.slack.group_reply]
+mode = "all_messages"  # all_messages | mention_only
+allowed_sender_ids = []  # IDs that bypass mention gate
+```
+
+### Environment Variables
+
+```bash
+ZEROCLAW_SLACK_BOT_TOKEN=xoxb-your-token
+ZEROCLAW_SLACK_APP_TOKEN=xapp-your-token
+```
+
+## Authentication
+
+### Creating a Slack App
+
+1. Go to [Slack API](https://api.slack.com/apps)
+2. Click "Create New App" → "From scratch"
+3. Name your app and select workspace
+4. Navigate to "OAuth & Permissions"
+5. Add Bot Token Scopes:
+   - `channels:history`
+   - `channels:read`
+   - `chat:write`
+   - `groups:history`
+   - `groups:read`
+   - `im:history`
+   - `im:read`
+   - `im:write`
+   - `mpim:history`
+   - `mpim:read`
+   - `users:read` (for display names)
+6. Install app to workspace
+7. Copy "Bot User OAuth Token" (starts with `xoxb-`)
+
+### Socket Mode Setup (Recommended)
+
+For real-time WebSocket connections:
+
+1. In your Slack app, go to "Socket Mode"
+2. Enable Socket Mode
+3. Generate App-Level Token:
+   - Name: "ZeroClaw Socket"
+   - Scopes: `connections:write`
+4. Copy token (starts with `xapp-`)
+5. Add to config:
+
+```toml
+app_token = "xapp-YOUR-APP-TOKEN"
+```
+
+6. Subscribe to Bot Events:
+   - `message.channels`
+   - `message.groups`
+   - `message.im`
+   - `message.mpim`
+
+### User Authorization
+
+Slack uses user IDs (format: `U123ABC456`):
+
+```toml
+allowed_users = [
+    "U123ABC456",  # Specific user
+    "*"            # All users (testing only)
+]
+```
+
+To find user IDs:
+1. Click user's profile in Slack
+2. Click "⋯ More" → "Copy member ID"
+
+Or use API:
+```bash
+curl -H "Authorization: Bearer xoxb-..." \
+  https://slack.com/api/users.list
+```
+
+## Features
+
+### Transport Modes
+
+#### Socket Mode (WebSocket)
+
+Enabled when `app_token` is configured:
+
+```toml
+app_token = "xapp-1-..."
+```
+
+**Advantages**:
+- Real-time message delivery
+- No polling overhead
+- Instant acknowledgments
+- Lower latency
+
+**How it works**:
+1. Opens WebSocket connection via `apps.connections.open`
+2. Receives events in real-time
+3. Sends acknowledgment for each envelope
+4. Auto-reconnects on disconnect
+5. Handles ping/pong for keepalive
+
+#### Polling Mode
+
+Used when `app_token` is not set:
+
+**Behavior**:
+- Polls `conversations.history` every 3 seconds
+- Tracks last seen timestamp per channel
+- Discovers new channels every 60 seconds (when `channel_id` not set)
+- Rate limit aware with exponential backoff
+
+### Channel Scope
+
+#### Single Channel
+
+```toml
+channel_id = "C1234567890"
+```
+
+Listens only to that channel.
+
+#### Multiple Channels
+
+```toml
+channel_ids = ["C123", "C456", "D789"]
+```
+
+#### All Accessible Channels
+
+```toml
+# Omit channel_id or set to "*"
+```
+
+Auto-discovers and listens to:
+- Public channels (bot is member)
+- Private channels (bot is invited)
+- DMs
+- Multi-person DMs
+
+Refreshes channel list every 60 seconds.
+
+### Display Name Resolution
+
+The channel automatically resolves user IDs to display names:
+
+```
+U123ABC456 → "Alice Johnson"
+```
+
+**Resolution order**:
+1. `profile.display_name`
+2. `profile.display_name_normalized`
+3. `profile.real_name_normalized`
+4. `profile.real_name`
+5. `user.real_name`
+6. `user.name`
+7. Falls back to user ID if all fail
+
+**Caching**:
+- Cached for 6 hours
+- Reduces API calls
+- Automatic expiration
+
+### Thread Support
+
+Slack threads are fully supported:
+
+**Incoming**:
+- `thread_ts` extracted from messages
+- Top-level messages use `ts` as thread identifier
+- Replies include `thread_ts` from original message
+
+**Outgoing**:
+```toml
+# Automatically sent to correct thread
+```
+
+If incoming message has `thread_ts`, reply uses same thread.
+
+### Group Chat Control
+
+#### Mention-Only Mode
+
+```toml
+[channels_config.slack.group_reply]
+mode = "mention_only"
+```
+
+Bot only responds when:
+- Explicitly mentioned: `<@BOT_USER_ID> hello`
+- In DMs
+- Sender is in `allowed_sender_ids`
+
+#### VIP Senders
+
+```toml
+[channels_config.slack.group_reply]
+mode = "mention_only"
+allowed_sender_ids = ["U123ABC456"]
+```
+
+These users bypass mention requirements in channels.
+
+### Rate Limit Handling
+
+Automatic handling for `conversations.history` rate limits:
+
+**Detection**:
+- HTTP 429 status
+- `error: "rate_limited"` in response
+
+**Retry Strategy**:
+1. Parse `Retry-After` header (seconds or decimal)
+2. Exponential backoff: `retry_after * 2^attempt`
+3. Cap at 120 seconds
+4. Add jitter (0-500ms) derived from system time
+5. Max 3 retries before giving up
+
+**Logging**:
+```
+Slack conversations.history rate limited for channel C123.
+Retry-After: 30s. Attempt 1/3. Next retry at 2024-01-15T10:30:00Z.
+```
+
+## Implementation Details
+
+### Source Location
+
+`src/channels/slack.rs` (1425 lines)
+
+### Key Components
+
+#### SlackChannel Struct
+
+```rust
+pub struct SlackChannel {
+    bot_token: String,
+    app_token: Option<String>,
+    channel_id: Option<String>,
+    channel_ids: Vec<String>,
+    allowed_users: Vec<String>,
+    mention_only: bool,
+    group_reply_allowed_sender_ids: Vec<String>,
+    user_display_name_cache: Mutex<HashMap<String, CachedSlackDisplayName>>,
+}
+```
+
+#### Socket Mode Flow
+
+1. Call `apps.connections.open` → get WebSocket URL
+2. Connect to WebSocket
+3. For each envelope:
+   - Parse `envelope_id` and `type`
+   - Handle event (if `type = "events_api"`)
+   - Send acknowledgment: `{"envelope_id": "..."}`
+4. Handle `disconnect` type → reconnect
+5. On error or close → wait 3s and restart
+
+#### Polling Mode Flow
+
+1. Get bot user ID via `auth.test`
+2. List accessible channels via `conversations.list` (if wildcard)
+3. For each channel:
+   - Track cursor timestamp (bootstrap to current time)
+   - Fetch `conversations.history` with `oldest=cursor`
+   - Process messages (newest-first, reverse to oldest-first)
+   - Update cursor to newest message `ts`
+   - Skip subtypes (system messages)
+4. Sleep 3 seconds
+5. Repeat
+
+### API Endpoints Used
+
+| Method | Purpose |
+|--------|--------|
+| `auth.test` | Get bot user ID |
+| `conversations.list` | Discover channels |
+| `conversations.history` | Fetch messages (polling) |
+| `chat.postMessage` | Send messages |
+| `users.info` | Get user display name |
+| `apps.connections.open` | Get Socket Mode URL |
+
+### Channel ID Prefixes
+
+- `C...` - Public channel
+- `G...` - Private channel (group)
+- `D...` - Direct message
+
+**Group detection**: Checks if first char is `C` or `G`.
+
+### Message Deduplication
+
+Prevents processing same message twice:
+
+**Polling Mode**:
+- Tracks `last_ts` per channel
+- Skips messages with `ts <= last_ts`
+- Bootstrap cursor to current time on first poll
+
+**Socket Mode**:
+- Tracks `last_ts` per channel
+- Skips messages with `ts <= last_ts`
+- Persistent across WebSocket reconnects
+
+## Error Handling
+
+### Common Errors
+
+**Invalid Token**:
+```
+Slack: auth.test failed: invalid_auth
+```
+Solution: Regenerate bot token
+
+**Missing Scopes**:
+```
+Slack: conversations.list failed: missing_scope
+```
+Solution: Add required OAuth scopes in Slack app settings
+
+**Socket Mode Not Enabled**:
+```
+Slack: apps.connections.open failed: feature_not_enabled
+```
+Solution: Enable Socket Mode in app settings
+
+**Rate Limited**:
+```
+Slack conversations.history rate limited for channel C123.
+Retry-After: 60s. Attempt 2/3.
+```
+Solution: Automatic retry with backoff (no action needed)
+
+**Channel Not Found**:
+```
+Slack: conversations.history failed: channel_not_found
+```
+Solution: Verify bot is member of channel
+
+### Error Sanitization
+
+```rust
+crate::providers::sanitize_api_error(&error)
+```
+
+Removes:
+- Authorization headers
+- Token values
+- Internal details
+
+## Runtime Commands
+
+Available in Slack:
+
+- `/new` - Start new conversation
+- `/model` - Show/switch current model
+- `/models` - Show/switch provider
+
+## Best Practices
+
+1. **Use Socket Mode**: Better performance and lower latency
+2. **Scope Channels**: Use `channel_id` if possible
+3. **User IDs**: More stable than usernames
+4. **Allowlist**: Start specific, expand as needed
+5. **Display Names**: Cached automatically for 6 hours
+6. **Mention Mode**: Use in public channels to reduce noise
+
+## Troubleshooting
+
+### Bot Doesn't Respond
+
+**Check Allowlist**:
+```bash
+# Get user ID from Slack profile or API
+curl -H "Authorization: Bearer xoxb-..." \
+  https://slack.com/api/users.list | jq '.members[] | select(.name=="alice") | .id'
+```
+
+```toml
+allowed_users = ["U123ABC456"]
+```
+
+**Check Logs**:
+```bash
+RUST_LOG=info zeroclaw daemon 2>&1 | grep Slack
+```
+
+Look for:
+- `Slack channel listening on #channel-name`
+- `Slack: ignoring message from unauthorized user:`
+- `Slack poll error:`
+
+**Check Bot Membership**:
+- Invite bot to channel: `/invite @YourBot`
+- Verify bot appears in channel members
+
+### Socket Mode Not Working
+
+**App Token Missing**:
+```toml
+app_token = "xapp-1-..."
+```
+
+**Wrong Scopes**:
+App-level token needs `connections:write`
+
+**Event Subscriptions**:
+Enable in Slack app settings:
+- `message.channels`
+- `message.groups`
+- `message.im`
+- `message.mpim`
+
+### Polling Mode Too Slow
+
+**Use Socket Mode**:
+Add `app_token` for real-time delivery
+
+**Reduce Channels**:
+Set specific `channel_id` instead of wildcard
+
+### Display Names Not Resolving
+
+**Missing Scope**:
+Add `users:read` to bot token scopes
+
+**Cache Expiration**:
+Display names cached for 6 hours, then refetched
+
+## Performance
+
+### Message Throughput
+
+**Socket Mode**:
+- Real-time delivery (&lt;100ms)
+- No polling overhead
+
+**Polling Mode**:
+- 3-second poll interval
+- Per-channel sequential processing
+
+### Optimization Tips
+
+1. **Socket Mode**: Use when available
+2. **Channel Scope**: Reduce with `channel_id`
+3. **Display Name Cache**: 6-hour TTL reduces API calls
+4. **Rate Limit Backoff**: Automatic, no tuning needed
+
+## Security
+
+### Token Protection
+
+- Bot tokens: Never logged
+- App tokens: Never logged
+- Sanitized from error messages
+
+### User Verification
+
+- Allowlist checked before processing
+- Bot self-messages always ignored
+- Channel scope enforced
+
+### Channel Filtering
+
+**Archived Channels**: Automatically excluded
+**Non-Member Channels**: Automatically excluded
+**Private Channels**: Only if bot is invited
+
+## See Also
+
+- [Channels Reference](/docs/channels-reference)
+- [Slack API Documentation](https://api.slack.com/)
+- [Socket Mode Guide](https://api.slack.com/apis/connections/socket)
+- [Tool Approval](/features/tool-approval)

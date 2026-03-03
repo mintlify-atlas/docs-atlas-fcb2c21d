@@ -1,122 +1,172 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "ZeroClaw",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#FF6B35",
+    "light": "#FFB997",
+    "dark": "#D84315"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/zeroclaw-labs/zeroclaw"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/zeroclaw-labs/zeroclaw",
+      "x": "https://x.com/zeroclawlabs",
+      "discord": "https://t.me/zeroclawlabs"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation",
+              "configuration"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/architecture",
+              "concepts/trait-system",
+              "concepts/providers",
+              "concepts/channels",
+              "concepts/tools",
+              "concepts/memory",
+              "concepts/security"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Guides",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "guides/creating-providers",
+              "guides/creating-channels",
+              "guides/creating-tools",
+              "guides/custom-memory",
+              "guides/peripherals",
+              "guides/gateway-setup",
+              "guides/deployment"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Operations",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "operations/running-agents",
+              "operations/monitoring",
+              "operations/troubleshooting",
+              "operations/security-best-practices"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core Traits",
             "pages": [
-              "api-reference/introduction"
+              "api/provider-trait",
+              "api/channel-trait",
+              "api/tool-trait",
+              "api/memory-trait",
+              "api/peripheral-trait"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Built-in Providers",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/providers/anthropic",
+              "api/providers/openai",
+              "api/providers/gemini",
+              "api/providers/bedrock",
+              "api/providers/custom"
+            ]
+          },
+          {
+            "group": "Built-in Channels",
+            "pages": [
+              "api/channels/cli",
+              "api/channels/telegram",
+              "api/channels/discord",
+              "api/channels/slack",
+              "api/channels/email",
+              "api/channels/whatsapp"
+            ]
+          },
+          {
+            "group": "Built-in Tools",
+            "pages": [
+              "api/tools/shell",
+              "api/tools/file-operations",
+              "api/tools/browser",
+              "api/tools/memory",
+              "api/tools/web-search"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "api/commands/chat",
+              "api/commands/gateway",
+              "api/commands/daemon",
+              "api/commands/config"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Hardware",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "hardware/introduction",
+              "hardware/supported-boards"
+            ]
+          },
+          {
+            "group": "Peripherals",
+            "pages": [
+              "hardware/peripherals/raspberry-pi",
+              "hardware/peripherals/stm32-nucleo",
+              "hardware/peripherals/arduino",
+              "hardware/peripherals/esp32"
+            ]
+          },
+          {
+            "group": "Robot Kit",
+            "pages": [
+              "hardware/robot-kit/overview",
+              "hardware/robot-kit/setup",
+              "hardware/robot-kit/api"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Community",
+        "groups": [
+          {
+            "group": "Resources",
+            "pages": [
+              "community/contributing",
+              "community/examples",
+              "community/changelog",
+              "community/roadmap"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,228 @@
+---
+title: ZeroClaw - Zero Overhead AI Agent Framework
+description: Fast, small, and fully autonomous. Deploy anywhere. Swap anything.
+---
+
+<img
+  src="/images/zeroclaw-hero.png"
+  alt="ZeroClaw Framework"
+  className="rounded-lg"
+/>
+
+# Zero overhead. Zero compromise. 100% Rust. 100% Agnostic.
+
+ZeroClaw is the **runtime framework** for agentic workflows — infrastructure that abstracts models, tools, memory, and execution so agents can be built once and run anywhere.
+
+<CardGroup cols={2}>
+  <Card title="Ultra-Lightweight" icon="feather">
+    Runs on any hardware with **&lt; 5MB RAM**. That's 99% less memory than TypeScript alternatives and 98% cheaper deployment.
+  </Card>
+  <Card title="Blazing Fast" icon="bolt">
+    **&lt; 10ms** cold start on edge hardware (0.8GHz). Single-binary Rust runtime keeps startup near-instant.
+  </Card>
+  <Card title="Trait-Driven Architecture" icon="puzzle-piece">
+    Swap providers, channels, tools, memory backends, and runtime adapters without touching core code.
+  </Card>
+  <Card title="Multi-Platform" icon="microchip">
+    One binary workflow across **ARM, x86, RISC-V**. Deploy on cloud VMs, Raspberry Pi, microcontrollers, or bare metal.
+  </Card>
+</CardGroup>
+
+## Why Teams Choose ZeroClaw
+
+<AccordionGroup>
+  <Accordion title="Lean by Default" icon="gauge-high">
+    Small Rust binary with fast startup and minimal memory footprint. Perfect for resource-constrained environments where every megabyte counts.
+  </Accordion>
+  
+  <Accordion title="Secure by Design" icon="shield-halved">
+    Built-in pairing, strict sandboxing, explicit allowlists, and workspace scoping. Security isn't bolted on—it's architectural.
+  </Accordion>
+  
+  <Accordion title="Fully Swappable" icon="arrows-rotate">
+    Core systems are traits: providers, channels, tools, memory, tunnels. Extend without forking. No vendor lock-in.
+  </Accordion>
+  
+  <Accordion title="OpenAI-Compatible" icon="plug">
+    Drop-in support for OpenAI-compatible endpoints plus pluggable custom providers. Use any model from any provider.
+  </Accordion>
+</AccordionGroup>
+
+## Hardware Support
+
+ZeroClaw runs on an exceptionally wide range of hardware platforms:
+
+<CardGroup cols={3}>
+  <Card title="Microcontrollers" icon="microchip">
+    - STM32 Nucleo boards
+    - Arduino (via zeroclaw-arduino)
+    - ESP32 (with UI support)
+  </Card>
+  <Card title="Single-Board Computers" icon="computer">
+    - Raspberry Pi (with GPIO support)
+    - Any ARM/ARM64 Linux board
+    - RISC-V development boards
+  </Card>
+  <Card title="Cloud & Desktop" icon="cloud">
+    - x86_64 Linux/macOS/Windows
+    - ARM64 cloud instances
+    - Docker/Podman containers
+  </Card>
+</CardGroup>
+
+## Performance Comparison
+
+Local machine benchmark (macOS arm64, Feb 2026) normalized for 0.8GHz edge hardware:
+
+| Metric | OpenClaw | NanoBot | PicoClaw | **ZeroClaw** |
+|--------|----------|---------|----------|-------------|
+| **Language** | TypeScript | Python | Go | **Rust** |
+| **RAM Usage** | > 1GB | > 100MB | &lt; 10MB | **&lt; 5MB** |
+| **Startup (0.8GHz)** | > 500s | > 30s | &lt; 1s | **&lt; 10ms** |
+| **Binary Size** | ~28MB | N/A | ~8MB | **~8.8 MB** |
+| **Min Hardware Cost** | $599 (Mac mini) | ~$50 (SBC) | $10 (board) | **Any** |
+
+<Note>
+  ZeroClaw results measured on release builds using `/usr/bin/time -l`. OpenClaw requires Node.js runtime (~390MB overhead). 
+  RAM figures are runtime memory; build-time requirements are higher (~2GB RAM + 6GB disk for source builds).
+</Note>
+
+## Architecture Highlights
+
+### Trait-Driven Design
+
+Every major subsystem is defined by a trait interface:
+
+```rust
+// From src/providers/traits.rs
+pub trait Provider: Send + Sync {
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse>;
+    fn name(&self) -> &str;
+    fn supports_streaming(&self) -> bool;
+}
+
+// From src/channels/traits.rs
+pub trait Channel: Send + Sync {
+    async fn send(&self, message: &str) -> Result<()>;
+    async fn listen(&self) -> Result<String>;
+    fn name(&self) -> &str;
+}
+
+// From src/tools/traits.rs
+pub trait Tool: Send + Sync {
+    async fn execute(&self, params: ToolParams) -> Result<ToolResult>;
+    fn schema(&self) -> ToolSchema;
+}
+```
+
+Implement a trait, register in the factory, and you're done. No core rewrites needed.
+
+### Research Phase
+
+Proactive information gathering through tools before response generation—reduces hallucinations by fact-checking first.
+
+### Secure Runtime
+
+- **Pairing-based gateway authentication** with OTP support
+- **Workspace scoping** prevents unauthorized file access
+- **Explicit allowlists** for domains and commands
+- **Sandboxing support** (Landlock on Linux, Bubblewrap)
+- **Secret encryption** using ChaCha20-Poly1305
+
+## Supported Providers
+
+<CardGroup cols={2}>
+  <Card title="Major Providers" icon="star">
+    - Anthropic (Claude)
+    - OpenAI (GPT-4, GPT-5)
+    - Google Gemini
+    - OpenRouter (multi-model gateway)
+    - Groq, DeepSeek, Mistral
+  </Card>
+  <Card title="Regional & Specialized" icon="globe">
+    - GLM/Zhipu (China)
+    - Qwen/DashScope (Alibaba)
+    - Minimax, Moonshot (Kimi)
+    - Volcengine (Doubao)
+    - Venice, Together AI, Fireworks
+  </Card>
+</CardGroup>
+
+### Self-Hosted & Local
+
+- **Ollama** (local models)
+- **llama.cpp** (GGUF models)
+- **vLLM**, **SGLang** (inference servers)
+- **Custom OpenAI-compatible** endpoints
+
+## Supported Channels
+
+Connect your agent to communication platforms:
+
+- **Chat**: Telegram, Discord, Slack, Matrix (E2EE), Mattermost
+- **Enterprise**: Microsoft Teams, Lark/Feishu, DingTalk, Nextcloud Talk
+- **Mobile**: WhatsApp, Signal, QQ, WeChat
+- **Email**: IMAP/SMTP (async-imap, lettre)
+- **Gateway**: Built-in HTTP webhook server with SSE streaming
+
+## Built-In Tools
+
+<CardGroup cols={2}>
+  <Card title="System Tools" icon="terminal">
+    - Shell command execution
+    - File operations (read/write/search)
+    - Directory navigation
+    - Process management
+  </Card>
+  <Card title="Web & Network" icon="globe">
+    - Web search (DuckDuckGo, Brave)
+    - HTTP requests
+    - Web page fetching (HTML to Markdown)
+    - Browser automation (Selenium/CDP)
+  </Card>
+  <Card title="Integrations" icon="plug">
+    - GitHub API
+    - Composio tool hub
+    - Pushover notifications
+    - Custom WASM plugins
+  </Card>
+  <Card title="Hardware" icon="microchip">
+    - GPIO control (Raspberry Pi)
+    - Serial communication (STM32, Arduino)
+    - USB device enumeration
+    - Peripheral tool delegation
+  </Card>
+</CardGroup>
+
+## Memory Backends
+
+- **SQLite** (default, embedded)
+- **PostgreSQL** (distributed)
+- **Markdown** (human-readable, git-friendly)
+- **Lucid** (high-performance vector search)
+- **Embeddings** (semantic similarity with configurable providers)
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get your first agent running in under 5 minutes
+  </Card>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Detailed installation for all platforms
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure providers, channels, and runtime options
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference">
+    Dive into traits, schemas, and advanced usage
+  </Card>
+</CardGroup>
+
+---
+
+<Note>
+  **Official Repository**: [github.com/zeroclaw-labs/zeroclaw](https://github.com/zeroclaw-labs/zeroclaw)
+  
+  **Dual-Licensed**: MIT OR Apache-2.0 for maximum openness and commercial compatibility.
+</Note>

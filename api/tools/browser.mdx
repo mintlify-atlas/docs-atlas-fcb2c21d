@@ -1,0 +1,172 @@
+---
+title: Browser Tool
+description: Automated web browsing and scraping
+---
+
+The browser tool enables agents to navigate websites, extract content, and interact with web pages.
+
+## Overview
+
+The browser tool supports:
+- Page navigation and content extraction
+- JavaScript rendering (optional)
+- Screenshot capture
+- Form interaction
+- Multiple backend modes
+
+## Backends
+
+<Tabs>
+  <Tab title="Native (Fantoccini)">
+    Uses Rust-native browser automation with WebDriver protocol.
+    
+    **Requirements:**
+    - ChromeDriver or GeckoDriver running locally
+    - Enable with `--features browser-native`
+    
+    **Capabilities:**
+    - Full JavaScript support
+    - Screenshot capture
+    - Element interaction
+    - Cookie management
+  </Tab>
+  
+  <Tab title="HTTP (Default)">
+    Uses HTTP client for static content extraction.
+    
+    **Capabilities:**
+    - Fast, lightweight
+    - No external dependencies
+    - HTML to text conversion
+    - No JavaScript execution
+  </Tab>
+</Tabs>
+
+## Parameters
+
+<ParamField path="url" type="string" required>
+  URL to navigate to. Must use http:// or https://
+</ParamField>
+
+<ParamField path="action" type="string">
+  Action to perform: `navigate`, `screenshot`, `click`, `type`
+</ParamField>
+
+<ParamField path="selector" type="string">
+  CSS selector for element interaction (click/type actions)
+</ParamField>
+
+<ParamField path="text" type="string">
+  Text to type (for type action)
+</ParamField>
+
+## Examples
+
+### Navigate and Extract
+
+```json
+{
+  "url": "https://example.com",
+  "action": "navigate"
+}
+```
+
+### Take Screenshot
+
+```json
+{
+  "url": "https://example.com",
+  "action": "screenshot"
+}
+```
+
+### Fill Form
+
+```json
+{
+  "url": "https://example.com/search",
+  "action": "type",
+  "selector": "input[name='q']",
+  "text": "ZeroClaw framework"
+}
+```
+
+## Response
+
+<ResponseField name="content" type="string">
+  Page content (text or base64-encoded screenshot)
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Page title
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  Final URL after redirects
+</ResponseField>
+
+## Configuration
+
+```toml
+[tools]
+browser_enabled = true
+browser_backend = "native"  # or "http"
+webdriver_url = "http://localhost:9515"
+
+[security]
+allowed_domains = [
+    "*.github.com",
+    "docs.rs",
+    "crates.io"
+]
+```
+
+## Security
+
+<Warning>
+  Configure `allowed_domains` to restrict which websites the agent can access.
+</Warning>
+
+- Domain allowlist enforcement
+- HTTPS preference
+- Request timeout (30 seconds)
+- Content size limits (5MB)
+- User agent identification
+
+## Setup
+
+### Native Backend
+
+<Steps>
+  <Step title="Install ChromeDriver">
+    ```bash
+    # macOS
+    brew install chromedriver
+    
+    # Linux
+    wget https://chromedriver.storage.googleapis.com/LATEST_RELEASE
+    ```
+  </Step>
+  
+  <Step title="Start WebDriver">
+    ```bash
+    chromedriver --port=9515
+    ```
+  </Step>
+  
+  <Step title="Build with feature flag">
+    ```bash
+    cargo build --features browser-native
+    ```
+  </Step>
+</Steps>
+
+## Source Code
+
+Implementation: [`src/tools/browser.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/browser.rs)
+
+## Related
+
+- [Web Search Tool](/api/tools/web-search)
+- [Tool Trait](/api/tool-trait)
+- [Security Configuration](/concepts/security)

@@ -1,0 +1,690 @@
+---
+title: Deployment Strategies
+description: Learn how to deploy ZeroClaw to production environments
+---
+
+ZeroClaw can be deployed in multiple ways depending on your needs — from single-binary deployments to containerized production setups. This guide covers best practices for each deployment strategy.
+
+## Deployment Options
+
+<CardGroup cols={2}>
+  <Card title="Docker" icon="docker">
+    Recommended for most users. Isolated, reproducible, easy to manage.
+  </Card>
+  <Card title="Binary" icon="file-binary">
+    Direct installation. Fast, minimal overhead, full system integration.
+  </Card>
+  <Card title="Systemd Service" icon="gear">
+    Run as a system service. Auto-start, logging, process management.
+  </Card>
+  <Card title="Kubernetes" icon="dharmachakra">
+    For large-scale deployments. Orchestration, scaling, high availability.
+  </Card>
+</CardGroup>
+
+## Docker Deployment
+
+### Using Docker Compose (Recommended)
+
+<Steps>
+
+### Create docker-compose.yml
+
+```yaml
+services:
+  zeroclaw:
+    image: ghcr.io/zeroclaw-labs/zeroclaw:latest
+    container_name: zeroclaw
+    restart: unless-stopped
+    
+    environment:
+      # Required: Your LLM provider API key
+      - API_KEY=${API_KEY}
+      
+      # Optional: Provider configuration
+      - PROVIDER=${PROVIDER:-openrouter}
+      - ZEROCLAW_MODEL=anthropic/claude-sonnet-4-20250514
+      
+      # Gateway configuration
+      - ZEROCLAW_ALLOW_PUBLIC_BIND=true  # Required for container networking
+      - ZEROCLAW_GATEWAY_PORT=${ZEROCLAW_GATEWAY_PORT:-42617}
+      
+    volumes:
+      # Persist workspace and config
+      - zeroclaw-data:/zeroclaw-data
+      
+    ports:
+      - "${HOST_PORT:-42617}:${ZEROCLAW_GATEWAY_PORT:-42617}"
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    healthcheck:
+      test: ["CMD", "zeroclaw", "status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  zeroclaw-data:
+```
+
+### Create .env file
+
+```bash
+API_KEY=your-api-key-here
+PROVIDER=openrouter
+HOST_PORT=42617
+ZEROCLAW_GATEWAY_PORT=42617
+```
+
+### Start the service
+
+```bash
+docker compose up -d
+```
+
+### View logs
+
+```bash
+docker compose logs -f zeroclaw
+```
+
+### Access the gateway
+
+Open http://localhost:42617 in your browser.
+
+</Steps>
+
+### Docker Run (Single Command)
+
+```bash
+docker run -d \
+  --name zeroclaw \
+  --restart unless-stopped \
+  -p 42617:42617 \
+  -e API_KEY="your-api-key" \
+  -e PROVIDER="openrouter" \
+  -e ZEROCLAW_ALLOW_PUBLIC_BIND=true \
+  -v zeroclaw-data:/zeroclaw-data \
+  ghcr.io/zeroclaw-labs/zeroclaw:latest
+```
+
+### Custom Configuration
+
+Mount a custom config file:
+
+```yaml
+services:
+  zeroclaw:
+    # ... other config
+    volumes:
+      - ./config.toml:/zeroclaw-data/.zeroclaw/config.toml:ro
+      - zeroclaw-data:/zeroclaw-data
+```
+
+### Multi-Stage Build
+
+Build from source with optimizations (from `Dockerfile`):
+
+```dockerfile
+# Stage 1: Build
+FROM rust:1.93-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    libudev-dev \
+    pkg-config
+
+# Copy manifests and build dependencies first (caching)
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs build.rs
+COPY crates/ crates/
+
+# Create dummy targets for dependency caching
+RUN mkdir -p src benches crates/robot-kit/src crates/zeroclaw-types/src crates/zeroclaw-core/src \
+    && echo "fn main() {}" > src/main.rs \
+    && echo "fn main() {}" > benches/agent_benchmarks.rs \
+    && echo "pub fn placeholder() {}" > crates/robot-kit/src/lib.rs \
+    && echo "pub fn placeholder() {}" > crates/zeroclaw-types/src/lib.rs \
+    && echo "pub fn placeholder() {}" > crates/zeroclaw-core/src/lib.rs
+
+# Build dependencies
+RUN cargo build --release --locked
+RUN rm -rf src benches crates/robot-kit/src crates/zeroclaw-types/src crates/zeroclaw-core/src
+
+# Copy source and build
+COPY src/ src/
+COPY benches/ benches/
+COPY crates/ crates/
+COPY firmware/ firmware/
+COPY templates/ templates/
+COPY web/ web/
+
+RUN cargo build --release --locked && \
+    cp target/release/zeroclaw /app/zeroclaw && \
+    strip /app/zeroclaw
+
+# Stage 2: Runtime
+FROM gcr.io/distroless/cc-debian13:nonroot
+
+COPY --from=builder /app/zeroclaw /usr/local/bin/zeroclaw
+COPY --from=builder /zeroclaw-data /zeroclaw-data
+
+WORKDIR /zeroclaw-data
+USER 65534:65534
+EXPOSE 42617
+
+ENTRYPOINT ["zeroclaw"]
+CMD ["gateway"]
+```
+
+## Binary Deployment
+
+### Build from Source
+
+```bash
+# Clone repository
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+
+# Build optimized binary
+cargo build --release --locked
+
+# Install to system
+sudo cp target/release/zeroclaw /usr/local/bin/
+sudo chmod +x /usr/local/bin/zeroclaw
+```
+
+### Download Pre-built Binary
+
+```bash
+# Download latest release
+wget https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/zeroclaw-linux-x86_64
+
+# Install
+sudo mv zeroclaw-linux-x86_64 /usr/local/bin/zeroclaw
+sudo chmod +x /usr/local/bin/zeroclaw
+
+# Verify
+zeroclaw --version
+```
+
+### Initialize Configuration
+
+```bash
+# Create workspace
+mkdir -p ~/.zeroclaw
+cd ~/.zeroclaw
+
+# Initialize config
+zeroclaw init
+
+# Edit configuration
+vim config.toml
+```
+
+## Systemd Service
+
+Run ZeroClaw as a system service for auto-start and process management.
+
+<Steps>
+
+### Create Service File
+
+Create `/etc/systemd/system/zeroclaw.service`:
+
+```ini
+[Unit]
+Description=ZeroClaw Autonomous Agent
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zeroclaw
+Group=zeroclaw
+WorkingDirectory=/home/zeroclaw/.zeroclaw
+
+# Environment
+Environment="API_KEY=your-api-key-here"
+Environment="PROVIDER=openrouter"
+Environment="ZEROCLAW_GATEWAY_PORT=42617"
+
+# Execution
+ExecStart=/usr/local/bin/zeroclaw gateway
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/zeroclaw/.zeroclaw
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=2G
+CPUQuota=200%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zeroclaw
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Create Service User
+
+```bash
+# Create dedicated user
+sudo useradd -r -s /bin/false -d /home/zeroclaw zeroclaw
+
+# Create workspace
+sudo mkdir -p /home/zeroclaw/.zeroclaw
+sudo chown -R zeroclaw:zeroclaw /home/zeroclaw
+```
+
+### Enable and Start
+
+```bash
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable auto-start
+sudo systemctl enable zeroclaw
+
+# Start service
+sudo systemctl start zeroclaw
+
+# Check status
+sudo systemctl status zeroclaw
+```
+
+### View Logs
+
+```bash
+# Follow logs
+sudo journalctl -u zeroclaw -f
+
+# View recent logs
+sudo journalctl -u zeroclaw -n 100
+```
+
+</Steps>
+
+## Kubernetes Deployment
+
+For production-scale deployments with orchestration.
+
+### Deployment Manifest
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zeroclaw
+  namespace: zeroclaw
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zeroclaw
+  template:
+    metadata:
+      labels:
+        app: zeroclaw
+    spec:
+      containers:
+      - name: zeroclaw
+        image: ghcr.io/zeroclaw-labs/zeroclaw:latest
+        imagePullPolicy: Always
+        
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: zeroclaw-secrets
+              key: api-key
+        - name: PROVIDER
+          value: "openrouter"
+        - name: ZEROCLAW_ALLOW_PUBLIC_BIND
+          value: "true"
+        - name: ZEROCLAW_GATEWAY_PORT
+          value: "42617"
+        
+        ports:
+        - containerPort: 42617
+          name: gateway
+          protocol: TCP
+        
+        volumeMounts:
+        - name: zeroclaw-data
+          mountPath: /zeroclaw-data
+        
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 42617
+          initialDelaySeconds: 30
+          periodSeconds: 60
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 42617
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      
+      volumes:
+      - name: zeroclaw-data
+        persistentVolumeClaim:
+          claimName: zeroclaw-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeroclaw
+  namespace: zeroclaw
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 42617
+    protocol: TCP
+    name: gateway
+  selector:
+    app: zeroclaw
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: zeroclaw-secrets
+  namespace: zeroclaw
+type: Opaque
+stringData:
+  api-key: "your-api-key-here"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zeroclaw-pvc
+  namespace: zeroclaw
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+### Deploy
+
+```bash
+# Create namespace
+kubectl create namespace zeroclaw
+
+# Apply manifests
+kubectl apply -f zeroclaw-deployment.yaml
+
+# Check status
+kubectl -n zeroclaw get pods
+kubectl -n zeroclaw get svc
+
+# View logs
+kubectl -n zeroclaw logs -f deployment/zeroclaw
+```
+
+## Reverse Proxy Setup
+
+### Nginx with SSL
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name zeroclaw.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/zeroclaw.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/zeroclaw.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:42617;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+
+server {
+    listen 80;
+    server_name zeroclaw.example.com;
+    return 301 https://$server_name$request_uri;
+}
+```
+
+Enable in ZeroClaw:
+
+```toml
+[gateway]
+trust_forwarded_headers = true
+```
+
+### Caddy (Auto-HTTPS)
+
+```
+zeroclaw.example.com {
+    reverse_proxy localhost:42617
+}
+```
+
+## Production Checklist
+
+<AccordionGroup>
+  <Accordion title="Security">
+    - [ ] Enable pairing (`require_pairing = true`)
+    - [ ] Use HTTPS (reverse proxy or tunnel)
+    - [ ] Set webhook secrets for all channels
+    - [ ] Configure rate limits appropriately
+    - [ ] Never expose gateway on 0.0.0.0 without protection
+    - [ ] Use environment variables for secrets (not config files)
+    - [ ] Enable audit logging
+  </Accordion>
+
+  <Accordion title="Reliability">
+    - [ ] Configure auto-restart (systemd or Docker restart policy)
+    - [ ] Set up health checks
+    - [ ] Configure resource limits (memory, CPU)
+    - [ ] Use persistent storage for config and workspace
+    - [ ] Enable backup for workspace data
+    - [ ] Set up monitoring (Prometheus + Grafana)
+    - [ ] Configure log rotation
+  </Accordion>
+
+  <Accordion title="Performance">
+    - [ ] Use appropriate memory backend (SQLite for production)
+    - [ ] Configure connection pooling
+    - [ ] Set reasonable rate limits
+    - [ ] Enable caching where appropriate
+    - [ ] Monitor resource usage
+    - [ ] Optimize tool execution timeouts
+  </Accordion>
+
+  <Accordion title="Operations">
+    - [ ] Document deployment procedure
+    - [ ] Set up log aggregation
+    - [ ] Configure alerts for errors/downtime
+    - [ ] Test backup/restore procedure
+    - [ ] Plan update/rollback strategy
+    - [ ] Monitor costs (LLM API usage)
+  </Accordion>
+</AccordionGroup>
+
+## Monitoring
+
+### Prometheus + Grafana
+
+**Prometheus scrape config:**
+
+```yaml
+scrape_configs:
+  - job_name: 'zeroclaw'
+    static_configs:
+      - targets: ['localhost:42617']
+    bearer_token: 'your-pairing-token'
+    metrics_path: '/metrics'
+```
+
+**Key metrics:**
+
+- `zeroclaw_requests_total` - Total HTTP requests
+- `zeroclaw_llm_latency_seconds` - LLM API latency
+- `zeroclaw_tool_executions_total` - Tool execution count
+- `zeroclaw_memory_entries` - Memory entry count
+- `zeroclaw_rate_limit_exceeded_total` - Rate limit hits
+
+### Health Checks
+
+```bash
+# HTTP health check
+curl http://localhost:42617/health
+
+# CLI health check
+zeroclaw status
+
+# Detailed diagnostics
+zeroclaw doctor
+```
+
+## Backup and Recovery
+
+### Backup Workspace
+
+```bash
+# Docker
+docker run --rm -v zeroclaw-data:/data -v $(pwd):/backup \
+  alpine tar czf /backup/zeroclaw-backup-$(date +%Y%m%d).tar.gz /data
+
+# Binary installation
+tar czf zeroclaw-backup-$(date +%Y%m%d).tar.gz ~/.zeroclaw
+```
+
+### Restore Workspace
+
+```bash
+# Docker
+docker run --rm -v zeroclaw-data:/data -v $(pwd):/backup \
+  alpine tar xzf /backup/zeroclaw-backup-20250101.tar.gz -C /
+
+# Binary installation
+tar xzf zeroclaw-backup-20250101.tar.gz -C ~/
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Gateway won't start on 0.0.0.0">
+    This is intentional security protection. Options:
+    
+    1. Use a tunnel:
+       ```toml
+       [tunnel]
+       provider = "cloudflare"
+       ```
+    
+    2. Explicit opt-in (use with caution):
+       ```toml
+       [gateway]
+       allow_public_bind = true
+       ```
+  </Accordion>
+
+  <Accordion title="Docker container exits immediately">
+    Check logs:
+    
+    ```bash
+    docker logs zeroclaw
+    ```
+    
+    Common issues:
+    - Missing API_KEY environment variable
+    - Invalid configuration
+    - Port already in use
+  </Accordion>
+
+  <Accordion title="Memory usage keeps growing">
+    Configure memory limits:
+    
+    ```toml
+    [memory]
+    backend = "sqlite"  # More efficient than markdown
+    max_entries = 10000
+    ```
+    
+    Or use Docker limits:
+    ```yaml
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    ```
+  </Accordion>
+
+  <Accordion title="High CPU usage">
+    - Check for infinite loops in agent reasoning
+    - Reduce max_tool_iterations
+    - Monitor with `zeroclaw doctor`
+    - Check for inefficient tool implementations
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gateway Setup" icon="server" href="/guides/gateway-setup">
+    Configure and secure the HTTP gateway
+  </Card>
+  <Card title="Creating Providers" icon="plug" href="/guides/creating-providers">
+    Add custom LLM providers
+  </Card>
+</CardGroup>

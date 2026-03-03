@@ -1,0 +1,446 @@
+---
+title: zeroclaw config
+description: Inspect, query, and modify ZeroClaw configuration settings
+---
+
+## Overview
+
+The `zeroclaw config` command provides a complete interface for managing your ZeroClaw configuration. It supports:
+
+- **Viewing** the full effective configuration
+- **Querying** specific values by dot-path notation
+- **Setting** values and persisting to config file
+- **Exporting** the configuration JSON Schema
+
+All configuration is stored in `config.toml` (or `ZEROCLAW_CONFIG_DIR` if set).
+
+## Subcommands
+
+```bash
+zeroclaw config show           # Show full effective config
+zeroclaw config get <key>      # Get specific value
+zeroclaw config set <key> <value>  # Set and save value
+zeroclaw config schema         # Print JSON Schema
+```
+
+## zeroclaw config show
+
+Display the full effective configuration with secrets masked.
+
+### Usage
+
+```bash
+zeroclaw config show
+```
+
+### Example Output
+
+```json
+{
+  "default_provider": "anthropic",
+  "default_model": "claude-sonnet-4-20250514",
+  "default_temperature": 0.7,
+  "workspace_dir": "/home/user/.zeroclaw/workspace",
+  "config_path": "/home/user/.zeroclaw/config.toml",
+  
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 8585,
+    "paired_tokens": ["***REDACTED***"]
+  },
+  
+  "agent": {
+    "max_tool_iterations": 10,
+    "max_history_messages": 50,
+    "compact_context": false
+  },
+  
+  "autonomy": {
+    "level": "supervised",
+    "workspace_only": true,
+    "max_actions_per_hour": 100,
+    "max_cost_per_day_cents": 1000
+  },
+  
+  "memory": {
+    "backend": "sqlite",
+    "auto_save": true
+  },
+  
+  "security": {
+    "otp": {
+      "enabled": false
+    },
+    "estop": {
+      "enabled": true,
+      "require_otp_to_resume": false
+    }
+  }
+}
+```
+
+### Secrets Masking
+
+Sensitive fields are automatically masked:
+
+- `api_key`, `api_keys`
+- `bot_token`
+- `paired_tokens`
+- `db_url`
+- `secret_key`
+- `webhook_secret`
+- `http_proxy`, `https_proxy`, `all_proxy`
+
+## zeroclaw config get
+
+Query a specific configuration value using dot-path notation.
+
+### Usage
+
+```bash
+zeroclaw config get <key>
+```
+
+### Examples
+
+```bash
+# Get scalar values
+zeroclaw config get gateway.port
+# Output: 8585
+
+zeroclaw config get default_provider
+# Output: anthropic
+
+zeroclaw config get security.estop.enabled
+# Output: true
+
+# Get nested objects (returns JSON)
+zeroclaw config get autonomy
+# Output: {"level":"supervised","workspace_only":true,...}
+
+# Get arrays
+zeroclaw config get autonomy.allowed_commands
+# Output: ["ls","cat","grep","git"]
+```
+
+### Dot-Path Syntax
+
+Use dots to traverse nested objects:
+
+```bash
+gateway.port                    # Simple nested key
+security.estop.enabled          # Multiple levels
+autonomy.allowed_commands       # Arrays
+channels.telegram.bot_token     # Sensitive values (masked)
+```
+
+### Error Handling
+
+```bash
+$ zeroclaw config get nonexistent.key
+Error: Config path not found: nonexistent.key
+```
+
+## zeroclaw config set
+
+Update a configuration value and persist it to `config.toml`.
+
+### Usage
+
+```bash
+zeroclaw config set <key> <value>
+```
+
+### Type Inference
+
+Values are automatically parsed:
+
+- `true` / `false` → Boolean
+- `null` → Null
+- `123` → Integer
+- `3.14` → Float
+- `{...}` or `[...]` → JSON object/array
+- Everything else → String
+
+### Examples
+
+#### Set Simple Values
+
+```bash
+# Integer
+zeroclaw config set gateway.port 9090
+# Output: Set gateway.port = 9090
+
+# Boolean
+zeroclaw config set security.estop.enabled true
+# Output: Set security.estop.enabled = true
+
+# String
+zeroclaw config set default_provider anthropic
+# Output: Set default_provider = anthropic
+
+# Float
+zeroclaw config set default_temperature 0.8
+# Output: Set default_temperature = 0.8
+```
+
+#### Set Arrays
+
+```bash
+# JSON array syntax
+zeroclaw config set autonomy.allowed_commands '["ls","cat","grep"]'
+# Output: Set autonomy.allowed_commands = ["ls","cat","grep"]
+```
+
+#### Set Objects
+
+```bash
+# JSON object syntax
+zeroclaw config set gateway.rate_limit '{"enabled":true,"max_requests":60}'
+# Output: Set gateway.rate_limit = {"enabled":true,"max_requests":60}
+```
+
+#### Set Enum Values
+
+```bash
+# Autonomy level (validated by schema)
+zeroclaw config set autonomy.level full
+# Output: Set autonomy.level = full
+
+# Memory backend
+zeroclaw config set memory.backend sqlite
+# Output: Set memory.backend = sqlite
+```
+
+### Validation
+
+Type mismatches are rejected:
+
+```bash
+$ zeroclaw config set gateway.port "not-a-number"
+Error: Invalid value for this config key — type mismatch
+```
+
+### Persistence
+
+Changes are immediately saved to `config.toml`:
+
+```bash
+zeroclaw config set gateway.port 9090
+# File ~/.zeroclaw/config.toml is updated atomically
+```
+
+## zeroclaw config schema
+
+Export the full configuration JSON Schema (draft 2020-12) to stdout.
+
+### Usage
+
+```bash
+zeroclaw config schema
+```
+
+### Example Output
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "type": "object",
+  "properties": {
+    "default_provider": {
+      "type": ["string", "null"],
+      "description": "Default AI provider"
+    },
+    "gateway": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "default": "127.0.0.1"
+        },
+        "port": {
+          "type": "integer",
+          "default": 8585,
+          "minimum": 0,
+          "maximum": 65535
+        }
+      }
+    }
+  }
+}
+```
+
+### Use Cases
+
+- **Validation**: Use schema to validate config files
+- **Documentation**: Generate config reference docs
+- **IDE support**: JSON Schema for autocomplete in editors
+- **Type generation**: Generate types for other languages
+
+## Configuration File Location
+
+### Default Location
+
+```bash
+~/.zeroclaw/config.toml
+```
+
+### Custom Location
+
+```bash
+# Via environment variable
+export ZEROCLAW_CONFIG_DIR=/custom/path
+zeroclaw config show
+
+# Via command flag
+zeroclaw --config-dir /custom/path config show
+```
+
+## Environment Variable Overrides
+
+Some settings can be overridden via environment variables:
+
+```bash
+# Provider API keys
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+
+# Logging
+export RUST_LOG=debug
+
+# Config directory
+export ZEROCLAW_CONFIG_DIR=/custom/path
+```
+
+Environment overrides are **not** persisted when using `config set`.
+
+## Common Configuration Tasks
+
+### Change Default Provider
+
+```bash
+zeroclaw config set default_provider openai
+zeroclaw config set default_model gpt-4
+```
+
+### Adjust Security Settings
+
+```bash
+# Enable emergency stop
+zeroclaw config set security.estop.enabled true
+
+# Require OTP for critical operations
+zeroclaw config set security.otp.enabled true
+
+# Restrict to workspace
+zeroclaw config set autonomy.workspace_only true
+```
+
+### Configure Gateway
+
+```bash
+# Change port
+zeroclaw config set gateway.port 9090
+
+# Bind to all interfaces
+zeroclaw config set gateway.host 0.0.0.0
+
+# Enable rate limiting
+zeroclaw config set gateway.rate_limit.enabled true
+zeroclaw config set gateway.rate_limit.max_requests_per_window 60
+```
+
+### Tune Agent Performance
+
+```bash
+# Reduce context size
+zeroclaw config set agent.max_history_messages 20
+zeroclaw config set agent.max_tool_iterations 5
+
+# Enable compact mode
+zeroclaw config set agent.compact_context true
+```
+
+### Memory Backend
+
+```bash
+# Switch to SQLite
+zeroclaw config set memory.backend sqlite
+
+# Switch to Markdown
+zeroclaw config set memory.backend markdown
+
+# Disable memory
+zeroclaw config set memory.backend none
+```
+
+## Configuration Sections
+
+Major configuration sections:
+
+- `gateway` - Gateway server settings
+- `agent` - Agent behavior and limits
+- `autonomy` - Autonomy level and restrictions
+- `memory` - Memory backend configuration
+- `security` - Security features (OTP, e-stop)
+- `channels` - Channel integrations (Telegram, Discord, etc.)
+- `peripherals` - Hardware peripheral settings
+- `cron` - Scheduled task settings
+- `heartbeat` - Health monitoring
+- `observability` - Logging and tracing
+
+## Backup and Restore
+
+### Backup Configuration
+
+```bash
+# Save to file
+zeroclaw config show > backup.json
+
+# Or copy TOML directly
+cp ~/.zeroclaw/config.toml config.backup.toml
+```
+
+### Restore Configuration
+
+```bash
+# Restore from backup
+cp config.backup.toml ~/.zeroclaw/config.toml
+
+# Verify
+zeroclaw config show
+```
+
+## Validation and Testing
+
+```bash
+# Check current config is valid
+zeroclaw config show > /dev/null
+echo $?
+# Output: 0 (valid)
+
+# Test specific setting
+zeroclaw config get gateway.port
+
+# Validate schema
+zeroclaw config schema | jq . > /dev/null
+```
+
+## Exit Codes
+
+- `0` - Success
+- `1` - Error (key not found, invalid value, write failure)
+- `2` - Configuration file error
+
+## Related Commands
+
+- [`zeroclaw status`](/api/commands/status) - View effective configuration in context
+- [`zeroclaw onboard`](/api/commands/onboard) - Initial configuration wizard
+
+## See Also
+
+- [Configuration Reference](/configuration)
+- [Security Configuration](/operations/security-best-practices)
+- [Provider Configuration](/api/providers)
+- [Channel Configuration](/api/channels)

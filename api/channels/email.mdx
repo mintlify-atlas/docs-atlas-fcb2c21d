@@ -1,0 +1,544 @@
+---
+title: Email Channel
+description: IMAP/SMTP email channel with IDLE support for instant notifications
+---
+
+# Email Channel
+
+The Email channel enables ZeroClaw to communicate via email using IMAP for receiving messages and SMTP for sending replies, with support for IMAP IDLE for instant push notifications.
+
+## Overview
+
+- **Channel Name**: `email`
+- **Transport**: IMAP (receive) + SMTP (send)
+- **Authentication**: Username/password
+- **Public Port Required**: No
+- **Supports**: Text, HTML, attachments, allowlist filtering
+
+## Configuration
+
+### Required Settings
+
+```toml
+[channels_config.email]
+imap_host = "imap.example.com"
+smtp_host = "smtp.example.com"
+username = "bot@example.com"
+password = "your-password"
+from_address = "bot@example.com"
+allowed_senders = ["*"]
+```
+
+### Complete Configuration
+
+```toml
+[channels_config.email]
+imap_host = "imap.example.com"
+imap_port = 993  # Default: 993 (TLS)
+imap_folder = "INBOX"  # Default: INBOX
+smtp_host = "smtp.example.com"
+smtp_port = 465  # Default: 465 (TLS)
+smtp_tls = true  # Default: true
+username = "bot@example.com"
+password = "your-password"
+from_address = "bot@example.com"
+idle_timeout_secs = 1740  # 29 minutes (RFC 2177 recommendation)
+allowed_senders = ["user@example.com", "@company.com"]
+
+[channels_config.email.imap_id]
+enabled = true  # Send RFC 2971 ID metadata
+name = "zeroclaw"
+version = "0.1.7"
+vendor = "zeroclaw-labs"
+```
+
+### Provider-Specific Examples
+
+#### Gmail
+
+```toml
+imap_host = "imap.gmail.com"
+imap_port = 993
+smtp_host = "smtp.gmail.com"
+smtp_port = 465
+username = "your-email@gmail.com"
+password = "app-specific-password"  # Not your Google password!
+```
+
+**Note**: Enable "Less secure app access" or create an App Password:
+1. Go to Google Account settings
+2. Security → 2-Step Verification
+3. App passwords → Generate new password
+4. Use generated password in config
+
+#### Outlook/Office 365
+
+```toml
+imap_host = "outlook.office365.com"
+imap_port = 993
+smtp_host = "smtp.office365.com"
+smtp_port = 587  # Note: 587 for STARTTLS
+smtp_tls = true
+username = "your-email@outlook.com"
+password = "your-password"
+```
+
+#### Yahoo Mail
+
+```toml
+imap_host = "imap.mail.yahoo.com"
+imap_port = 993
+smtp_host = "smtp.mail.yahoo.com"
+smtp_port = 465
+username = "your-email@yahoo.com"
+password = "app-password"  # Generate in Yahoo Account Security
+```
+
+#### NetEase (163.com / 126.com)
+
+```toml
+imap_host = "imap.163.com"  # or imap.126.com
+imap_port = 993
+smtp_host = "smtp.163.com"  # or smtp.126.com
+smtp_port = 465
+username = "your-email@163.com"
+password = "authorization-code"  # Not your login password!
+
+[channels_config.email.imap_id]
+enabled = true  # Required for NetEase!
+name = "zeroclaw"
+version = "0.1.7"
+vendor = "zeroclaw-labs"
+```
+
+**Important**: NetEase requires RFC 2971 IMAP ID extension. Without it, mailbox selection fails.
+
+## Features
+
+### IMAP IDLE (Push Mode)
+
+The channel uses IMAP IDLE (RFC 2177) for instant push notifications:
+
+**How it works**:
+1. Connect to IMAP server with TLS
+2. Authenticate with username/password
+3. Select mailbox (default: INBOX)
+4. Check for existing unseen messages
+5. Enter IDLE mode
+6. Server pushes notifications when new mail arrives
+7. Fetch and process new messages
+8. Re-enter IDLE
+
+**Timeout Behavior**:
+- Default: 1740 seconds (29 minutes)
+- RFC 2177 recommends clients restart IDLE every 29 minutes
+- Automatic reconnection on timeout
+- Exponential backoff on connection errors
+
+**Advantages over Polling**:
+- Instant delivery (no delay)
+- Lower server load
+- Lower bandwidth usage
+- Standard protocol support
+
+### Allowlist Filtering
+
+#### Empty List (Deny All)
+
+```toml
+allowed_senders = []
+```
+
+Blocks all inbound emails.
+
+#### Wildcard (Allow All)
+
+```toml
+allowed_senders = ["*"]
+```
+
+Accepts emails from anyone (testing only).
+
+#### Specific Email Addresses
+
+```toml
+allowed_senders = [
+    "alice@example.com",
+    "bob@company.org"
+]
+```
+
+Case-insensitive exact match.
+
+#### Domain Matching
+
+```toml
+allowed_senders = [
+    "@example.com",      # With @ prefix
+    "company.org"        # Without @ prefix
+]
+```
+
+Accepts any sender from those domains:
+- `user@example.com` ✔️
+- `admin@example.com` ✔️
+- `anyone@company.org` ✔️
+
+#### Mixed Rules
+
+```toml
+allowed_senders = [
+    "ceo@company.com",   # Specific user
+    "@trusted.org",      # Entire domain
+    "partners.net"       # Another domain
+]
+```
+
+### Message Processing
+
+#### Text Extraction
+
+**Priority**:
+1. Plain text body (MIME `text/plain`)
+2. HTML body (MIME `text/html`) - HTML tags stripped
+3. Text attachments
+4. Fallback: `"(no readable content)"`
+
+**HTML Stripping**:
+Simple tag removal:
+```html
+<p>Hello <strong>world</strong></p>
+→ "Hello world"
+```
+
+#### Subject Handling
+
+Subject is prefixed to content:
+```
+Subject: Question about ZeroClaw
+
+How do I configure email channel?
+```
+
+### IMAP ID Extension (RFC 2971)
+
+Sends client identification after login:
+
+```toml
+[channels_config.email.imap_id]
+enabled = true
+name = "zeroclaw"
+version = "0.1.7"
+vendor = "zeroclaw-labs"
+```
+
+**Why it matters**:
+- Some providers (NetEase) require it
+- Helps with debugging
+- Provider can optimize for known clients
+
+**Sent fields**:
+- `name` - Client application name
+- `version` - Client version
+- `vendor` - Vendor/organization name
+
+If disabled or fails, continues without ID (non-fatal).
+
+### Attachment Support
+
+**Current Implementation**:
+- Text attachments inlined: `[Attachment: file.txt]\ncontent`
+- Other MIME types skipped
+
+**Future**: Full attachment download and processing planned.
+
+### Reply Threading
+
+Replies are sent to the sender's address:
+
+```toml
+# Incoming: alice@example.com
+# Reply target: alice@example.com
+```
+
+No threading support (each email is independent).
+
+## Implementation Details
+
+### Source Location
+
+`src/channels/email_channel.rs` (1106 lines)
+
+### Key Components
+
+#### EmailChannel Struct
+
+```rust
+pub struct EmailChannel {
+    pub config: EmailConfig,
+    seen_messages: Arc<Mutex<HashSet<String>>>,
+}
+```
+
+#### EmailConfig
+
+```rust
+pub struct EmailConfig {
+    pub imap_host: String,
+    pub imap_port: u16,
+    pub imap_folder: String,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_tls: bool,
+    pub username: String,
+    pub password: String,
+    pub from_address: String,
+    pub idle_timeout_secs: u64,
+    pub allowed_senders: Vec<String>,
+    pub imap_id: EmailImapIdConfig,
+}
+```
+
+### Connection Flow
+
+#### IMAP (Receive)
+
+1. **TCP Connect**: `TcpStream::connect(host:port)`
+2. **TLS Handshake**: rustls with system root certificates
+3. **IMAP Greeting**: Wait for server hello
+4. **LOGIN**: `LOGIN username password`
+5. **IMAP ID**: Send RFC 2971 metadata (if enabled)
+6. **SELECT**: Open mailbox (INBOX)
+7. **SEARCH**: Find unseen messages: `UID SEARCH UNSEEN`
+8. **FETCH**: Download message bodies: `UID FETCH ... RFC822`
+9. **STORE**: Mark as seen: `UID STORE ... +FLAGS (\Seen)`
+10. **IDLE**: Enter idle mode: `IDLE`
+11. **Wait**: Block until server notification or timeout
+12. **DONE**: Exit idle: `DONE`
+13. **Repeat** from step 7
+
+#### SMTP (Send)
+
+1. **TCP Connect**: (TLS port 465 or STARTTLS port 587)
+2. **TLS**: Establish encrypted connection
+3. **EHLO**: Identify client
+4. **AUTH**: Authenticate with credentials
+5. **MAIL FROM**: Set sender
+6. **RCPT TO**: Set recipient
+7. **DATA**: Send message body
+8. **QUIT**: Close connection
+
+### Message Deduplication
+
+Prevents processing same email twice:
+
+**Mechanism**:
+- Tracks seen message IDs in memory: `HashSet<String>`
+- Message ID from `Message-ID` header or generated UUID
+- Persists across IDLE reconnections
+- Not persisted to disk (resets on restart)
+
+**Behavior on Restart**:
+- Marks all unseen messages in inbox as seen
+- Processes them once
+- Future restarts see no unseen messages
+
+### Error Recovery
+
+**Connection Loss**:
+1. Log error with backoff counter
+2. Wait 1 second
+3. Exponential backoff: 2s, 4s, 8s, ..., max 60s
+4. Reconnect from scratch
+5. Resume listening
+
+**IDLE Timeout**:
+1. Exit IDLE cleanly with `DONE`
+2. Check for new messages
+3. Re-enter IDLE
+
+## Error Handling
+
+### Common Errors
+
+**Authentication Failed**:
+```
+IMAP login failed: authentication failure
+```
+Solution:
+- Verify username/password
+- Check if app passwords required
+- Enable IMAP access in provider settings
+
+**Connection Timeout**:
+```
+IMAP connection timeout
+```
+Solution:
+- Check firewall rules
+- Verify IMAP port (993 for TLS)
+- Test with telnet: `openssl s_client -connect imap.example.com:993`
+
+**TLS Error**:
+```
+TLS handshake failed: certificate verify failed
+```
+Solution:
+- Update system root certificates
+- Check system time (affects cert validation)
+
+**Mailbox Selection Failed (NetEase)**:
+```
+IMAP error: command not permitted
+```
+Solution: Enable IMAP ID extension:
+```toml
+[channels_config.email.imap_id]
+enabled = true
+```
+
+**IDLE Not Supported**:
+```
+IMAP IDLE error: command not recognized
+```
+Fallback to polling (future feature - currently returns error).
+
+## Runtime Commands
+
+Not applicable - email operates asynchronously.
+
+## Best Practices
+
+1. **Use App Passwords**: For Gmail, Yahoo, etc.
+2. **Allowlist Domains**: Use `@company.com` for organizations
+3. **Dedicated Account**: Create separate email for bot
+4. **Monitor Logs**: Watch for connection errors
+5. **IMAP ID**: Enable for NetEase and other providers requiring it
+6. **TLS Always**: Never disable `smtp_tls`
+
+## Troubleshooting
+
+### No Messages Received
+
+**Check Allowlist**:
+```bash
+echo "Test" | mail -s "Test" bot@example.com
+```
+
+```toml
+allowed_senders = ["your-email@example.com"]
+```
+
+**Check Logs**:
+```bash
+RUST_LOG=debug zeroclaw daemon 2>&1 | grep -i email
+```
+
+Look for:
+- `Email IDLE listening on INBOX (instant push enabled)`
+- `Blocked email from ...`
+- `Email poll failed:`
+
+**Check IMAP Access**:
+```bash
+openssl s_client -connect imap.example.com:993
+# Then manually:
+# A1 LOGIN username password
+# A2 SELECT INBOX
+# A3 SEARCH UNSEEN
+```
+
+### Messages Not Sending
+
+**Check SMTP Credentials**:
+Same as IMAP username/password (usually)
+
+**Check Port**:
+- Port 465: SMTP over TLS (smtps)
+- Port 587: SMTP with STARTTLS
+
+**Check Firewall**:
+```bash
+telnet smtp.example.com 465
+```
+
+**Test with CLI**:
+```bash
+# Using swaks (SMTP test tool)
+swaks --to user@example.com \
+      --from bot@example.com \
+      --server smtp.example.com:465 \
+      --auth LOGIN \
+      --auth-user bot@example.com \
+      --auth-password 'your-password' \
+      --tls
+```
+
+### IDLE Keeps Disconnecting
+
+**Provider Limit**:
+Some providers close IDLE after shorter timeout.
+
+**Solution**: Reduce timeout:
+```toml
+idle_timeout_secs = 900  # 15 minutes
+```
+
+**NAT Timeout**:
+Router/firewall may close idle connections.
+
+**Solution**: Even shorter timeout:
+```toml
+idle_timeout_secs = 300  # 5 minutes
+```
+
+## Performance
+
+### Message Latency
+
+**IMAP IDLE**:
+- Delivery: &lt;5 seconds (instant push)
+- Processing: Depends on agent/provider
+
+**Polling (fallback)**:
+- Poll interval: Configurable (default: 60s)
+- Latency: 0-60 seconds
+
+### Optimization Tips
+
+1. **IDLE Over Polling**: Always preferred
+2. **Reduce Timeout**: Lower for flaky networks
+3. **Dedicated Mailbox**: Use separate folder if needed
+4. **Allowlist**: Reduces processing overhead
+
+## Security
+
+### Credential Protection
+
+- Stored in config file (protect with permissions: `chmod 600`)
+- Never logged
+- Transmitted over TLS only
+
+### TLS Configuration
+
+- **IMAP**: Port 993 (implicit TLS)
+- **SMTP**: Port 465 (implicit TLS) or 587 (STARTTLS)
+- Uses system root certificates (rustls + webpki-roots)
+- Certificate validation always enabled
+
+### Allowlist Enforcement
+
+- Checked before any processing
+- Case-insensitive for email addresses
+- Logged when blocked:
+  ```
+  Blocked email from untrusted@example.com
+  ```
+
+## See Also
+
+- [Channels Reference](/docs/channels-reference)
+- [RFC 3501 - IMAP4rev1](https://tools.ietf.org/html/rfc3501)
+- [RFC 2177 - IMAP IDLE](https://tools.ietf.org/html/rfc2177)
+- [RFC 2971 - IMAP ID Extension](https://tools.ietf.org/html/rfc2971)
+- [RFC 5321 - SMTP](https://tools.ietf.org/html/rfc5321)

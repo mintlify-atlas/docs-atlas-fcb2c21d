@@ -1,0 +1,95 @@
+---
+title: Shell Tool
+description: Execute shell commands with security sandboxing
+---
+
+The `shell` tool allows agents to execute shell commands in the workspace directory with comprehensive security controls.
+
+## Overview
+
+The Shell tool provides:
+- Command execution with 60-second timeout
+- Output size limits (1MB max)
+- Environment variable filtering
+- Security policy validation
+- Syscall anomaly detection (optional)
+- Cross-platform support (Linux, macOS, Windows)
+
+## Parameters
+
+<ParamField path="command" type="string" required>
+  The shell command to execute. Validated against security policy.
+</ParamField>
+
+## Example
+
+```json
+{
+  "command": "ls -la"
+}
+```
+
+## Response
+
+<ResponseField name="output" type="string">
+  Combined stdout and stderr from the command execution
+</ResponseField>
+
+<ResponseField name="exit_code" type="integer">
+  Command exit code (0 for success)
+</ResponseField>
+
+## Security
+
+The shell tool enforces multiple security layers:
+
+<AccordionGroup>
+  <Accordion title="Command Validation">
+    Commands are validated against:
+    - Blocked command patterns (rm -rf /, dd, mkfs, etc.)
+    - Dangerous flag combinations
+    - Path traversal attempts
+    - Network access restrictions (when configured)
+  </Accordion>
+
+  <Accordion title="Environment Variables">
+    Only safe environment variables are passed:
+    - PATH, HOME, TERM, LANG, USER, SHELL
+    - Windows: USERPROFILE, SYSTEMROOT, TEMP
+    - Custom additions via `shell_env_passthrough` config
+    - **Never** passes API keys or credentials
+  </Accordion>
+
+  <Accordion title="Execution Limits">
+    - **Timeout**: 60 seconds hard limit
+    - **Output**: 1MB maximum (truncated if exceeded)
+    - **Working Directory**: Scoped to workspace
+    - **Syscall Monitoring**: Optional anomaly detection
+  </Accordion>
+</AccordionGroup>
+
+## Configuration
+
+Configure shell tool behavior in `config.toml`:
+
+```toml
+[security]
+shell_enabled = true
+blocked_commands = [
+    "rm -rf /",
+    "dd if=",
+    "mkfs",
+    "format"
+]
+shell_env_passthrough = ["CI", "BUILD_ID"]
+```
+
+## Source Code
+
+Implementation: [`src/tools/shell.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/shell.rs)
+
+## Related
+
+- [Tool Trait](/api/tool-trait)
+- [Security Policy](/concepts/security)
+- [Creating Tools Guide](/guides/creating-tools)

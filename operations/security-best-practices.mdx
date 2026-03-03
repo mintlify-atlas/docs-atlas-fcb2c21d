@@ -1,0 +1,508 @@
+---
+title: Security Best Practices
+description: Hardening your ZeroClaw deployment
+---
+
+Follow these security best practices to deploy ZeroClaw safely in production.
+
+## Principle: Defense in Depth
+
+ZeroClaw implements multiple security layers:
+
+1. **Authentication** - Pairing codes, API keys, allowlists
+2. **Authorization** - Autonomy levels, approval prompts
+3. **Validation** - Command filtering, path checking
+4. **Sandboxing** - Process isolation, resource limits
+5. **Monitoring** - Audit logs, anomaly detection
+
+## Authentication
+
+### API Keys
+
+<Warning>
+  Never commit API keys to version control.
+</Warning>
+
+**Best practices:**
+
+```bash
+# Store in environment variables, not config files
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+
+# Use secret management in production
+# AWS Secrets Manager
+aws secretsmanager get-secret-value --secret-id zeroclaw/anthropic-key
+
+# HashiCorp Vault
+vault kv get secret/zeroclaw/api-keys
+```
+
+### Gateway Pairing
+
+Always enable pairing for internet-exposed gateways:
+
+```toml
+[gateway]
+require_pairing = true
+pairing_code_length = 8
+pairing_timeout_minutes = 5
+```
+
+Pairing workflow:
+
+<Steps>
+  <Step title="Start gateway">
+    ```bash
+    zeroclaw gateway
+    ```
+    
+    Generates one-time pairing code: `AB12-CD34`
+  </Step>
+  
+  <Step title="Client pairs">
+    ```bash
+    curl -X POST http://localhost:3000/pair \
+      -d '{"code": "AB12-CD34"}'
+    ```
+    
+    Returns session token.
+  </Step>
+  
+  <Step title="Use token">
+    ```bash
+    curl http://localhost:3000/api/chat \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Step>
+</Steps>
+
+### Channel Allowlists
+
+Restrict who can interact with the agent:
+
+```toml
+# Telegram
+[channels.telegram]
+allowed_user_ids = [123456789, 987654321]
+
+# Discord
+[channels.discord]
+allowed_user_ids = ["123456789012345678"]
+
+# Email
+[channels.email]
+allowed_senders = ["boss@company.com", "@company.com"]
+
+# Slack
+[channels.slack]
+allowed_users = ["U123ABC", "U456DEF"]
+```
+
+## Authorization
+
+### Autonomy Levels
+
+Control tool execution permissions:
+
+<Tabs>
+  <Tab title="Supervised (Recommended)">
+    Requires human approval for all tool calls.
+    
+    ```toml
+    [agent]
+    autonomy_level = "supervised"
+    ```
+    
+    **Use when:**
+    - Running untrusted code
+    - High-risk operations
+    - Learning agent behavior
+  </Tab>
+  
+  <Tab title="Semi-autonomous">
+    Auto-approves safe tools, prompts for risky ones.
+    
+    ```toml
+    [agent]
+    autonomy_level = "semi-autonomous"
+    
+    [security]
+    auto_approve_tools = ["file_read", "memory_recall"]
+    require_approval_tools = ["shell", "file_write"]
+    ```
+  </Tab>
+  
+  <Tab title="Autonomous">
+    Full automation, no approval needed.
+    
+    ```toml
+    [agent]
+    autonomy_level = "autonomous"
+    ```
+    
+    <Warning>
+      Only use in sandboxed environments with strict security policies.
+    </Warning>
+  </Tab>
+</Tabs>
+
+### Tool Allowlists
+
+Disable unused tools:
+
+```toml
+[security]
+shell_enabled = true
+file_write_enabled = true
+browser_enabled = false  # Disable if not needed
+```
+
+## Validation
+
+### Command Filtering
+
+Block dangerous shell commands:
+
+```toml
+[security]
+blocked_commands = [
+    # Destructive operations
+    "rm -rf /",
+    "mkfs",
+    "dd if=",
+    "format",
+    
+    # System modification
+    "chmod 777",
+    "chown root",
+    
+    # Network attacks
+    "nmap",
+    "tcpdump",
+    
+    # Crypto mining
+    "xmrig",
+    "cgminer"
+]
+```
+
+### Path Validation
+
+Enforce workspace boundaries:
+
+```toml
+[security]
+workspace_path = "/var/zeroclaw/workspace"
+
+# Block access to sensitive directories
+blocked_paths = [
+    "/etc",
+    "/sys",
+    "/proc",
+    "~/.ssh",
+    "~/.aws"
+]
+```
+
+### Network Restrictions
+
+Limit outbound connections:
+
+```toml
+[security]
+allowed_domains = [
+    "*.github.com",
+    "api.anthropic.com",
+    "api.openai.com"
+]
+
+blocked_ips = [
+    "127.0.0.0/8",      # Localhost
+    "10.0.0.0/8",       # Private
+    "172.16.0.0/12",    # Private
+    "192.168.0.0/16"    # Private
+]
+```
+
+## Sandboxing
+
+### Landlock (Linux)
+
+Filesystem sandboxing with Landlock LSM:
+
+```bash
+# Build with Landlock support
+cargo build --features sandbox-landlock
+```
+
+```toml
+[security.sandboxing]
+landlock_enabled = true
+allowed_read_paths = ["/usr", "/lib", "$WORKSPACE"]
+allowed_write_paths = ["$WORKSPACE", "/tmp"]
+```
+
+### Process Limits
+
+Prevent resource exhaustion:
+
+```toml
+[runtime]
+max_memory_mb = 512
+max_cpu_percent = 80
+max_processes = 10
+max_file_descriptors = 1024
+```
+
+### Timeout Enforcement
+
+Limit execution time:
+
+```toml
+[tools]
+shell_timeout_seconds = 60
+browser_timeout_seconds = 30
+file_operation_timeout_seconds = 10
+```
+
+## Monitoring
+
+### Audit Logging
+
+Enable comprehensive audit logs:
+
+```toml
+[security.audit]
+enabled = true
+log_tool_calls = true
+log_security_events = true
+log_path = "~/.zeroclaw/audit.log"
+```
+
+Audit log format:
+
+```json
+{
+  "timestamp": "2026-03-03T12:00:00Z",
+  "event_type": "tool_call",
+  "tool": "shell",
+  "args": {"command": "ls -la"},
+  "result": "success",
+  "user": "telegram:123456789",
+  "session_id": "abc123"
+}
+```
+
+### Anomaly Detection
+
+Monitor for unusual behavior:
+
+```toml
+[security.anomaly_detection]
+enabled = true
+max_failed_commands_per_hour = 10
+max_sensitive_file_access_per_hour = 5
+alert_on_blocked_command = true
+```
+
+### Rate Limiting
+
+Prevent abuse:
+
+```toml
+[security]
+max_actions_per_hour = 100
+max_actions_per_day = 1000
+rate_limit_per_minute = 20
+```
+
+## Network Security
+
+### TLS/HTTPS
+
+Always use TLS for public endpoints:
+
+```toml
+[gateway]
+tls_enabled = true
+tls_cert_path = "/etc/zeroclaw/cert.pem"
+tls_key_path = "/etc/zeroclaw/key.pem"
+```
+
+Generate self-signed cert for testing:
+
+```bash
+openssl req -x509 -newkey rsa:4096 -nodes \
+  -keyout key.pem -out cert.pem -days 365
+```
+
+### Reverse Proxy
+
+Use nginx or Caddy in front of gateway:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name zeroclaw.example.com;
+    
+    ssl_certificate /etc/letsencrypt/live/zeroclaw.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/zeroclaw.example.com/privkey.pem;
+    
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+### Firewall Rules
+
+Restrict access to gateway:
+
+```bash
+# Allow only from specific IPs
+sudo ufw allow from 203.0.113.0/24 to any port 3000
+
+# Deny all other inbound
+sudo ufw deny 3000
+```
+
+## Secret Management
+
+### Environment Variables
+
+Never hardcode secrets:
+
+```bash
+# ❌ DON'T: Store in config
+[providers.anthropic]
+api_key = "sk-ant-..."
+
+# ✅ DO: Use environment variables
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### Secret Rotation
+
+Rotate API keys regularly:
+
+<Steps>
+  <Step title="Generate new key">
+    Create new key in provider dashboard
+  </Step>
+  
+  <Step title="Update environment">
+    ```bash
+    export ANTHROPIC_API_KEY="sk-ant-new-..."
+    ```
+  </Step>
+  
+  <Step title="Restart service">
+    ```bash
+    zeroclaw service restart
+    ```
+  </Step>
+  
+  <Step title="Verify">
+    ```bash
+    zeroclaw status
+    ```
+  </Step>
+  
+  <Step title="Revoke old key">
+    Delete old key from provider dashboard
+  </Step>
+</Steps>
+
+## Incident Response
+
+When security incidents occur:
+
+<Steps>
+  <Step title="Isolate">
+    Stop the affected service:
+    ```bash
+    zeroclaw service stop
+    ```
+  </Step>
+  
+  <Step title="Investigate">
+    Review audit logs:
+    ```bash
+    cat ~/.zeroclaw/audit.log | grep "blocked\|failed"
+    ```
+  </Step>
+  
+  <Step title="Remediate">
+    - Revoke compromised credentials
+    - Update security policies
+    - Patch vulnerabilities
+  </Step>
+  
+  <Step title="Restore">
+    Restart with updated configuration:
+    ```bash
+    zeroclaw doctor
+    zeroclaw service start
+    ```
+  </Step>
+  
+  <Step title="Document">
+    Record incident in security log
+  </Step>
+</Steps>
+
+## Compliance
+
+### Data Retention
+
+Configure retention policies:
+
+```toml
+[memory]
+retention_days = 90
+auto_delete_old_entries = true
+
+[security.audit]
+log_retention_days = 365
+```
+
+### PII Handling
+
+Redact sensitive information:
+
+```toml
+[security]
+redact_pii = true
+pii_patterns = [
+    "\\b\\d{3}-\\d{2}-\\d{4}\\b",  # SSN
+    "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"  # Email
+]
+```
+
+## Security Checklist
+
+Before deploying to production:
+
+- [ ] API keys in environment variables, not config files
+- [ ] Gateway pairing enabled
+- [ ] Channel allowlists configured
+- [ ] Autonomy level set to `supervised` or `semi-autonomous`
+- [ ] Dangerous commands blocked
+- [ ] Workspace path restricted
+- [ ] TLS/HTTPS enabled for public endpoints
+- [ ] Rate limiting configured
+- [ ] Audit logging enabled
+- [ ] Resource limits set
+- [ ] Firewall rules applied
+- [ ] Regular backups configured
+- [ ] Incident response plan documented
+
+## Related
+
+- [Security Concepts](/concepts/security)
+- [Running Agents](/operations/running-agents)
+- [Monitoring](/operations/monitoring)
+- [Configuration Reference](/configuration)

@@ -1,0 +1,313 @@
+---
+title: Contributing to ZeroClaw
+description: Learn how to contribute to the ZeroClaw framework - from first-time contributions to advanced integrations
+---
+
+# Contributing to ZeroClaw
+
+Thanks for your interest in contributing to ZeroClaw! This guide will help you get started, whether you're fixing a typo or building a new provider.
+
+## First-Time Contributors
+
+Welcome — contributions of all sizes are valued. If this is your first contribution:
+
+<Steps>
+  <Step title="Find an issue">
+    Look for issues labeled [`good first issue`](https://github.com/zeroclaw-labs/zeroclaw/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22). These are scoped for newcomers and include context to get moving quickly.
+  </Step>
+  
+  <Step title="Pick a scope">
+    Good first contributions include:
+    - Typo and documentation fixes
+    - Test additions or improvements
+    - Small bug fixes with clear reproduction steps
+  </Step>
+  
+  <Step title="Follow the workflow">
+    Fork → branch → change → test → PR:
+    ```bash
+    # Fork the repository and clone your fork
+    git checkout -b fix/my-change
+    cargo fmt && cargo clippy && cargo test
+    # Open a PR against `dev` using the PR template
+    ```
+  </Step>
+  
+  <Step title="Start with Track A">
+    ZeroClaw uses three collaboration tracks (A/B/C) based on risk. First-time contributors should target **Track A** (docs, tests, chore) — these require lighter review and are the fastest path to a merged PR.
+  </Step>
+</Steps>
+
+<Tip>If you get stuck, open a draft PR early and ask questions in the description.</Tip>
+
+## Development Setup
+
+### Quick Start
+
+```bash
+# Clone the repo
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+
+# Enable the pre-push hook (runs fmt, clippy, tests before every push)
+git config core.hooksPath .githooks
+
+# Build
+cargo build
+
+# Run tests (all must pass)
+cargo test --locked
+
+# Format & lint (required before PR)
+./scripts/ci/rust_quality_gate.sh
+
+# Release build
+cargo build --release --locked
+```
+
+### Pre-push Hook
+
+The repo includes a pre-push hook in `.githooks/` that enforces quality checks. Enable it with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+For opt-in strict lint passes:
+
+```bash
+# Strict lint pass during pre-push
+ZEROCLAW_STRICT_LINT=1 git push
+
+# Strict lint delta pass (changed Rust lines only)
+ZEROCLAW_STRICT_DELTA_LINT=1 git push
+
+# Docs quality pass (changed-line markdown gate)
+ZEROCLAW_DOCS_LINT=1 git push
+
+# Docs links pass (added-links gate)
+ZEROCLAW_DOCS_LINKS=1 git push
+```
+
+To skip hooks during rapid iteration:
+
+```bash
+git push --no-verify
+```
+
+<Warning>CI runs the same checks, so skipped hooks will be caught on the PR.</Warning>
+
+## Collaboration Tracks (Risk-Based)
+
+Every PR should map to one track to keep review throughput high:
+
+| Track | Scope | Review Depth |
+|-------|-------|-------------|
+| **Track A (Low risk)** | docs/tests/chore, isolated refactors | 1 maintainer review + green CI |
+| **Track B (Medium risk)** | providers/channels/memory/tools behavior changes | 1 subsystem-aware review + validation evidence |
+| **Track C (High risk)** | `src/security/**`, `src/runtime/**`, `src/gateway/**`, `.github/workflows/**` | 2-pass review, rollback plan required |
+
+<Info>When in doubt, choose the higher track.</Info>
+
+## Architecture: Trait-Based Pluggability
+
+ZeroClaw's architecture is built on **traits** — every subsystem is swappable. Contributing a new integration is as simple as implementing a trait and registering it.
+
+```
+src/
+├── providers/       # LLM backends     → Provider trait
+├── channels/        # Messaging         → Channel trait
+├── observability/   # Metrics/logging   → Observer trait
+├── runtime/         # Platform adapters → RuntimeAdapter trait
+├── tools/           # Agent tools       → Tool trait
+├── memory/          # Persistence       → Memory trait
+└── security/        # Sandboxing        → SecurityPolicy
+```
+
+## How to Add Integrations
+
+### Adding a Provider
+
+Create `src/providers/your_provider.rs`:
+
+```rust
+use async_trait::async_trait;
+use anyhow::Result;
+use crate::providers::traits::Provider;
+
+pub struct YourProvider {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl YourProvider {
+    pub fn new(api_key: Option<&str>) -> Self {
+        Self {
+            api_key: api_key.unwrap_or_default().to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for YourProvider {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String> {
+        // Your API call here
+        todo!()
+    }
+}
+```
+
+Register in `src/providers/mod.rs`:
+
+```rust
+"your_provider" => Ok(Box::new(your_provider::YourProvider::new(api_key))),
+```
+
+### Adding a Channel
+
+Create `src/channels/your_channel.rs`:
+
+```rust
+use async_trait::async_trait;
+use anyhow::Result;
+use tokio::sync::mpsc;
+use crate::channels::traits::{Channel, ChannelMessage};
+
+pub struct YourChannel { /* config fields */ }
+
+#[async_trait]
+impl Channel for YourChannel {
+    fn name(&self) -> &str { "your_channel" }
+
+    async fn send(&self, message: &str, recipient: &str) -> Result<()> {
+        // Send message via your platform
+        todo!()
+    }
+
+    async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()> {
+        // Listen for incoming messages, forward to tx
+        todo!()
+    }
+
+    async fn health_check(&self) -> bool { true }
+}
+```
+
+### Adding a Tool
+
+Create `src/tools/your_tool.rs`:
+
+```rust
+use async_trait::async_trait;
+use anyhow::Result;
+use serde_json::{json, Value};
+use crate::tools::traits::{Tool, ToolResult};
+
+pub struct YourTool { /* security policy, config */ }
+
+#[async_trait]
+impl Tool for YourTool {
+    fn name(&self) -> &str { "your_tool" }
+    fn description(&self) -> &str { "Does something useful" }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "input": { "type": "string", "description": "The input" }
+            },
+            "required": ["input"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let input = args["input"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'input'"))?;
+        Ok(ToolResult {
+            success: true,
+            output: format!("Processed: {input}"),
+            error: None,
+        })
+    }
+}
+```
+
+<Tip>See the [examples directory](https://github.com/zeroclaw-labs/zeroclaw/tree/main/examples) for complete working examples of custom providers, channels, tools, and memory backends.</Tip>
+
+## Code Naming Conventions
+
+Use these defaults unless an existing subsystem pattern clearly overrides them:
+
+- **Rust casing**: modules/files `snake_case`, types/traits/enums `PascalCase`, functions/variables `snake_case`, constants `SCREAMING_SNAKE_CASE`
+- **Domain-first naming**: prefer `DiscordChannel`, `SecurityPolicy`, `SqliteMemory` over `Manager`, `Util`, `Helper`
+- **Trait implementers**: keep predictable suffixes (`*Provider`, `*Channel`, `*Tool`, `*Memory`)
+- **Factory keys**: lowercase and stable (`openai`, `discord`, `shell`)
+- **Tests**: behavior-oriented names (`subject_expected_behavior`)
+
+## Pull Request Checklist
+
+<AccordionGroup>
+  <Accordion title="Before Opening PR">
+    - [ ] PR template sections are completed (including security + rollback)
+    - [ ] `./scripts/ci/rust_quality_gate.sh` passes
+    - [ ] `cargo test --locked` passes locally
+    - [ ] New code has inline `#[cfg(test)]` tests
+    - [ ] No new dependencies unless absolutely necessary
+    - [ ] README updated if adding user-facing features
+    - [ ] Follows code naming conventions and architecture boundary rules
+    - [ ] No personal/sensitive data in code/docs/tests/fixtures
+  </Accordion>
+  
+  <Accordion title="Commit Convention">
+    We use [Conventional Commits](https://www.conventionalcommits.org/):
+
+    ```
+    feat: add Anthropic provider
+    feat(provider): add Anthropic provider
+    fix: path traversal edge case with symlinks
+    docs: update contributing guide
+    test: add heartbeat unicode parsing tests
+    refactor: extract common security checks
+    chore: bump tokio to 1.43
+    ```
+
+    Recommended scope keys: `provider`, `channel`, `memory`, `security`, `runtime`, `ci`, `docs`, `tests`
+  </Accordion>
+  
+  <Accordion title="Code Style">
+    - **Minimal dependencies** — every crate adds to binary size
+    - **Inline tests** — `#[cfg(test)] mod tests {}` at the bottom of each file
+    - **Trait-first** — define the trait, then implement
+    - **Security by default** — sandbox everything, allowlist, never blocklist
+    - **No unwrap in production code** — use `?`, `anyhow`, or `thiserror`
+  </Accordion>
+</AccordionGroup>
+
+## Reporting Issues
+
+- **Bugs**: Include OS, Rust version, steps to reproduce, expected vs actual
+- **Features**: Describe the use case, propose which trait to extend
+- **Security**: See [SECURITY.md](https://github.com/zeroclaw-labs/zeroclaw/blob/main/SECURITY.md) for responsible disclosure
+- **Privacy**: Redact/anonymize all personal data before posting logs/payloads
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="CONTRIBUTING.md" icon="file-lines" href="https://github.com/zeroclaw-labs/zeroclaw/blob/main/CONTRIBUTING.md">
+    Full contributor guide with detailed workflows
+  </Card>
+  <Card title="Examples" icon="code" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/examples">
+    Working code examples for all extension points
+  </Card>
+  <Card title="Architecture Docs" icon="sitemap" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/docs">
+    Deep dives into system design and patterns
+  </Card>
+  <Card title="Discussions" icon="comments" href="https://github.com/zeroclaw-labs/zeroclaw/discussions">
+    Ask questions and share ideas
+  </Card>
+</CardGroup>
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.

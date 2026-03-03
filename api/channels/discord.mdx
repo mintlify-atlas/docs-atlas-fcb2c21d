@@ -1,0 +1,519 @@
+---
+title: Discord Channel
+description: Discord Gateway API channel for real-time bot communication
+---
+
+# Discord Channel
+
+The Discord channel enables ZeroClaw to communicate via Discord's Gateway WebSocket API with support for guilds, direct messages, attachments, and interactive components.
+
+## Overview
+
+- **Channel Name**: `discord`
+- **Transport**: Gateway WebSocket (real-time)
+- **Authentication**: Bot token
+- **Public Port Required**: No
+- **Supports**: Text, images, documents, attachments, message components
+
+## Configuration
+
+### Required Settings
+
+```toml
+[channels_config.discord]
+bot_token = "YOUR_DISCORD_BOT_TOKEN"
+allowed_users = ["*"]  # User IDs (snowflakes)
+```
+
+### Complete Configuration
+
+```toml
+[channels_config.discord]
+bot_token = "YOUR_DISCORD_BOT_TOKEN"
+guild_id = "123456789012345678"  # Optional: restrict to one guild
+allowed_users = ["987654321098765432"]  # Discord user IDs
+listen_to_bots = false  # Ignore other bot messages
+mention_only = false  # Legacy; prefer group_reply.mode
+
+[channels_config.discord.group_reply]
+mode = "all_messages"  # all_messages | mention_only
+allowed_sender_ids = []  # IDs that bypass mention gate
+```
+
+### Environment Variables
+
+```bash
+ZEROCLAW_DISCORD_BOT_TOKEN=your-bot-token
+```
+
+## Authentication
+
+### Getting a Bot Token
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click "New Application" and name your bot
+3. Navigate to the "Bot" tab
+4. Click "Add Bot" and confirm
+5. Copy the bot token
+6. Under "Privileged Gateway Intents", enable:
+   - Message Content Intent
+   - Server Members Intent (optional)
+   - Presence Intent (optional)
+
+### Adding Bot to Server
+
+1. In Developer Portal, go to "OAuth2" → "URL Generator"
+2. Select scopes: `bot`, `applications.commands`
+3. Select bot permissions:
+   - Read Messages/View Channels
+   - Send Messages
+   - Read Message History
+   - Add Reactions
+   - Attach Files
+   - Embed Links
+4. Copy generated URL and open in browser
+5. Select server and authorize
+
+### User Authorization
+
+Discord uses numeric user IDs (snowflakes):
+
+```toml
+allowed_users = [
+    "987654321098765432",  # User ID
+    "*"                     # Wildcard (testing only)
+]
+```
+
+To find your user ID:
+1. Enable Developer Mode in Discord (Settings → Advanced)
+2. Right-click your username
+3. Click "Copy ID"
+
+## Features
+
+### Message Splitting
+
+Discord has a 2000 character limit. ZeroClaw automatically:
+
+- Splits long messages at word boundaries
+- Prefers splitting at newlines (if found in last 50% of chunk)
+- Falls back to space boundaries
+- Hard splits at 2000 chars if no good break point
+
+### Gateway Connection
+
+The channel uses Discord's Gateway v10:
+
+- **Intents**: `GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT | DIRECT_MESSAGES` (37377)
+- **Heartbeat**: Automatic based on server interval
+- **Reconnection**: Automatic on disconnect
+- **Resume**: Supported via sequence tracking
+
+### Guild Filtering
+
+Restrict bot to one guild:
+
+```toml
+guild_id = "123456789012345678"
+```
+
+Behavior:
+- Guild messages: Only process if `guild_id` matches
+- DMs: Always processed (no `guild_id` present)
+- Multi-guild: Omit `guild_id` to listen everywhere
+
+### Bot Message Filtering
+
+By default, ignores messages from other bots:
+
+```toml
+listen_to_bots = false  # Default
+```
+
+Set to `true` to process bot messages (use with caution - can cause loops).
+
+### Group Chat Control
+
+#### Mention-Only Mode
+
+```toml
+[channels_config.discord.group_reply]
+mode = "mention_only"
+```
+
+Bot only responds when:
+- Explicitly mentioned: `@YourBot hello`
+- In DMs
+- Sender is in `allowed_sender_ids`
+
+Both mention formats work:
+- `<@BOT_USER_ID>` (standard)
+- `<@!BOT_USER_ID>` (nickname)
+
+#### VIP Senders
+
+```toml
+[channels_config.discord.group_reply]
+mode = "mention_only"
+allowed_sender_ids = ["123456789012345678"]
+```
+
+These users bypass mention requirements in guild channels.
+
+### Attachment Support
+
+#### Incoming Attachments
+
+**Images**: Detected by MIME type and file extension
+- MIME: `image/*`
+- Extensions: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`, `.avif`, `.heic`, `.heif`
+- Converted to `[IMAGE:url]` markers
+
+**Text Files**: MIME `text/*`
+- Downloaded and inlined: `[filename]\ncontent`
+
+**Other Files**: Logged and skipped
+
+#### Outgoing Attachments
+
+Send attachments using markers:
+
+```
+[IMAGE:/workspace/diagram.png]
+[DOCUMENT:/workspace/report.pdf]
+[VIDEO:/workspace/demo.mp4]
+[AUDIO:/workspace/music.mp3]
+```
+
+Supported markers:
+- `[IMAGE:path]` or `[PHOTO:path]`
+- `[DOCUMENT:path]` or `[FILE:path]`
+- `[VIDEO:path]`
+- `[AUDIO:path]`
+- `[VOICE:path]`
+
+Path resolution:
+- Workspace-relative: `file.txt` → `/workspace/file.txt`
+- Absolute: `/workspace/subdir/file.txt`
+- `/workspace/` prefix: `/workspace/data/image.png`
+
+Security:
+- All paths validated against workspace root
+- Directory traversal blocked
+- Symlinks validated
+- Max 10 files per message (Discord limit)
+
+### Reactions
+
+Add/remove emoji reactions:
+
+```rust
+channel.add_reaction(channel_id, message_id, "👍").await?;
+channel.remove_reaction(channel_id, message_id, "👍").await?
+```
+
+**Supported Emojis**:
+- Unicode: `👍`, `❤️`, `🔥`
+- Custom guild emojis: `name:id` format
+
+**ACK Reactions** (default enabled):
+When messages are received, bot reacts with:
+- ⚡️, 🦀, 🙌, 💪, 👌, 👀, 👣 (random)
+
+Configure via:
+```toml
+[channels_config.discord]
+# ack_reaction is set automatically
+```
+
+### Typing Indicator
+
+The bot can show typing status:
+
+```rust
+channel.start_typing(channel_id).await?;  // Shows "Bot is typing..."
+// ... generate response ...
+channel.stop_typing(channel_id).await?;   // Stops typing
+```
+
+Typing is sent every 8 seconds while active.
+
+### Tool Approval Components
+
+Interactive approval prompts with buttons:
+
+```
+**Approval required** for tool `shell`.
+Request ID: `abc-123-def`
+Args: `{"command": "ls"}`
+
+[Approve] [Deny]
+```
+
+Buttons have:
+- Style 3 (green) for Approve
+- Style 4 (red) for Deny
+- Custom IDs: `zcapr:yes:<request_id>`, `zcapr:no:<request_id>`
+
+Clicking triggers:
+- `/approve-allow <request_id>`
+- `/approve-deny <request_id>`
+
+Buttons are removed after decision.
+
+## Implementation Details
+
+### Source Location
+
+`src/channels/discord.rs` (1265+ lines)
+
+### Key Components
+
+#### DiscordChannel Struct
+
+```rust
+pub struct DiscordChannel {
+    bot_token: String,
+    guild_id: Option<String>,
+    allowed_users: Vec<String>,
+    listen_to_bots: bool,
+    mention_only: bool,
+    group_reply_allowed_sender_ids: Vec<String>,
+    ack_reaction: Option<AckReactionConfig>,
+    workspace_dir: Option<PathBuf>,
+    typing_handles: Mutex<HashMap<String, JoinHandle<()>>>,
+}
+```
+
+#### Gateway Events Handled
+
+| Opcode | Event | Action |
+|--------|-------|--------|
+| 0 | Dispatch | Process events |
+| 1 | Heartbeat Request | Send heartbeat |
+| 7 | Reconnect | Close and reconnect |
+| 9 | Invalid Session | Close and restart |
+| 10 | Hello | Send Identify |
+| 11 | Heartbeat ACK | (Tracked internally) |
+
+#### Dispatch Events
+
+- `MESSAGE_CREATE`: New message received
+- `INTERACTION_CREATE`: Button click (type 3 = MessageComponent)
+
+### Message Processing Flow
+
+1. Connect to Gateway WebSocket
+2. Receive Hello (op 10) with heartbeat interval
+3. Send Identify (op 2) with intents
+4. Track sequence number for all dispatches
+5. Process MESSAGE_CREATE events:
+   - Skip bot's own messages
+   - Skip other bots (unless `listen_to_bots = true`)
+   - Check allowlist
+   - Check guild filter
+   - Check mention requirements
+   - Download attachments
+   - Convert to `ChannelMessage`
+   - Send to agent
+6. Process INTERACTION_CREATE for approval buttons
+7. Send heartbeat every N seconds (op 1)
+
+### Bot User ID Extraction
+
+The bot's own user ID is extracted from the bot token:
+
+```rust
+// Token format: base64(user_id).timestamp.hmac
+let user_id = bot_user_id_from_token(token);
+```
+
+This allows the bot to:
+- Ignore its own messages
+- Detect mentions (`<@user_id>`, `<@!user_id>`)
+
+### Reconnection Strategy
+
+**Normal Close**: Gateway sends op 7 (Reconnect) or op 9 (Invalid Session)
+- Log warning
+- Break listen loop
+- Supervisor restarts channel
+- Fresh connection established
+
+**Abnormal Close**: WebSocket error or timeout
+- Propagate error
+- Supervisor restarts with backoff
+
+## Error Handling
+
+### Common Errors
+
+**Invalid Token (401)**:
+```
+Discord: health check failed: 401 Unauthorized
+```
+Solution: Regenerate bot token in Developer Portal
+
+**Missing Intents**:
+```
+Gateway error: Invalid intent(s)
+```
+Solution: Enable "Message Content Intent" in Developer Portal
+
+**Missing Permissions**:
+```
+Discord send message failed (403): Missing Access
+```
+Solution: Grant bot required permissions in channel/server
+
+**Rate Limit (429)**:
+```
+Discord send message failed (429): rate limited
+```
+Solution: Automatic retry with backoff
+
+**Attachment Too Large**:
+```
+Discord attachment rejected: file size exceeds limit
+```
+Discord limits:
+- Standard: 8 MB
+- Nitro Classic: 50 MB
+- Nitro: 100 MB
+
+### Error Sanitization
+
+All Discord API errors pass through:
+```rust
+crate::providers::sanitize_api_error(&error)
+```
+
+Removes:
+- Authorization headers
+- Bot tokens
+- Internal API details
+
+## Runtime Commands
+
+Available in Discord chat:
+
+- `/new` - Start new conversation
+- `/model` - Show/switch current model
+- `/models` - Show/switch provider
+- `/approve-allow <id>` - Approve tool execution
+- `/approve-deny <id>` - Deny tool execution
+
+## Best Practices
+
+1. **Enable Message Content Intent**: Required for reading message text
+2. **Use User IDs**: More stable than usernames
+3. **Guild Filtering**: Restrict to specific servers if needed
+4. **Mention Mode**: Use in public servers to avoid spam
+5. **Allowlist**: Start with specific users, not `*`
+6. **Workspace Setup**: Configure for attachment support
+
+## Troubleshooting
+
+### Bot Doesn't Respond
+
+**Check Allowlist**:
+```bash
+# Get your user ID
+Right-click your name → Copy ID
+```
+
+```toml
+allowed_users = ["YOUR_USER_ID_HERE"]
+```
+
+**Check Logs**:
+```bash
+RUST_LOG=info zeroclaw daemon 2>&1 | grep Discord
+```
+
+Look for:
+- `Discord: connected and identified`
+- `Discord: ignoring message from unauthorized user:`
+- `Discord: received Invalid Session (op 9)`
+
+**Check Permissions**:
+- View Channel
+- Send Messages
+- Read Message History
+
+### Guild Messages Not Working
+
+**Bot Not in Guild**:
+- Re-invite bot with OAuth2 URL
+- Check bot shows in member list
+
+**Guild Filter Mismatch**:
+```toml
+# Remove or update guild_id
+guild_id = "CORRECT_GUILD_ID"
+```
+
+**Mention Required**:
+```toml
+[channels_config.discord.group_reply]
+mode = "all_messages"  # Not mention_only
+```
+
+### Attachments Not Working
+
+**Workspace Not Set**:
+Configure workspace directory:
+```toml
+# Via main config
+workspace_dir = "~/.zeroclaw/workspace"
+```
+
+**Path Outside Workspace**:
+Ensure paths start with `/workspace/` or are relative
+
+**Missing Permissions**:
+Grant bot "Attach Files" and "Embed Links" permissions
+
+## Performance
+
+### Message Throughput
+
+- **Gateway**: Real-time via WebSocket
+- **Latency**: Typically &lt;100ms from send to receive
+- **Concurrent**: One message at a time per channel
+
+### Optimization Tips
+
+1. **Guild Filtering**: Reduce event volume with `guild_id`
+2. **Bot Filtering**: Keep `listen_to_bots = false`
+3. **Attachment Download**: Lazy - only when needed
+4. **Typing Indicator**: Use sparingly (API rate limited)
+
+## Security
+
+### Token Protection
+
+- Tokens never logged
+- Redacted from error messages
+- Store in config file (protect with permissions)
+
+### User Verification
+
+- Allowlist checked before processing
+- Bot self-messages always ignored
+- Guild filter enforced
+
+### Workspace Sandboxing
+
+- All paths validated against workspace root
+- Directory traversal blocked (`../`)
+- Symlink targets validated
+- Non-workspace paths rejected
+
+## See Also
+
+- [Channels Reference](/docs/channels-reference)
+- [Discord Developer Portal](https://discord.com/developers/applications)
+- [Discord Gateway API](https://discord.com/developers/docs/topics/gateway)
+- [Tool Approval](/features/tool-approval)

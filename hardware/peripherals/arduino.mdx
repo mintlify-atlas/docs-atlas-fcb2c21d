@@ -1,0 +1,388 @@
+---
+title: Arduino Setup
+description: Flash and configure Arduino boards with ZeroClaw
+---
+
+# Arduino Setup
+
+Arduino boards are widely used microcontrollers perfect for education and hobby projects. ZeroClaw supports Arduino via USB serial with JSON protocol communication.
+
+## Supported Boards
+
+| Board | MCU | Flash | RAM | WiFi | Status |
+|-------|-----|-------|-----|------|--------|
+| **Arduino Uno** | ATmega328P | 32KB | 2KB | No | ✅ Stable |
+| **Arduino Uno R4 WiFi** | RA4M1 + ESP32-S3 | 256KB | 32KB | Yes | ✅ Stable (Bridge) |
+
+## Arduino Uno (Classic)
+
+### Hardware Features
+
+- **MCU**: AVR ATmega328P, 16 MHz
+- **GPIO**: 14 digital pins (6 PWM), 6 analog inputs
+- **Serial**: USB (CH340 or ATmega16U2 USB-to-serial)
+- **LED**: Pin 13 (built-in LED)
+- **Firmware**: `firmware/zeroclaw-arduino/zeroclaw-arduino.ino`
+
+### Quick Start
+
+#### 1. Flash Firmware
+
+<Tabs>
+  <Tab title="Via ZeroClaw (Recommended)">
+    ```bash
+    # Auto-flash via avrdude
+    zeroclaw peripheral flash --port /dev/ttyUSB0
+
+    # macOS
+    zeroclaw peripheral flash --port /dev/cu.usbserial-14320
+
+    # Windows
+    zeroclaw peripheral flash --port COM3
+    ```
+
+    This command:
+    1. Compiles the Arduino sketch
+    2. Uploads via avrdude
+    3. Verifies the upload
+  </Tab>
+  
+  <Tab title="Via Arduino IDE">
+    1. Open Arduino IDE
+    2. File → Open → `firmware/zeroclaw-arduino/zeroclaw-arduino.ino`
+    3. Tools → Board → Arduino Uno
+    4. Tools → Port → `/dev/ttyUSB0` (or your port)
+    5. Click Upload button
+  </Tab>
+</Tabs>
+
+#### 2. Find Serial Port
+
+```bash
+# Linux
+ls /dev/ttyUSB*
+# Should show: /dev/ttyUSB0
+
+# macOS
+ls /dev/cu.usbserial* /dev/cu.usbmodem*
+# CH340: /dev/cu.usbserial-14320
+# Native: /dev/cu.usbmodem14201
+
+# Windows
+mode
+# Should show: COM3, COM4, etc.
+```
+
+#### 3. Add to Configuration
+
+```bash
+# Auto-configure
+zeroclaw peripheral add arduino-uno /dev/ttyUSB0
+
+# Or manually edit ~/.zeroclaw/config.toml
+```
+
+```toml
+[peripherals]
+enabled = true
+
+[[peripherals.boards]]
+board = "arduino-uno"
+transport = "serial"
+path = "/dev/ttyUSB0"  # Adjust for your system
+baud = 115200
+```
+
+#### 4. Test Connection
+
+```bash
+# Test built-in LED (pin 13)
+zeroclaw agent -m "Turn on the LED on Arduino"
+
+# Should light up the built-in LED (orange LED labeled 'L')
+```
+
+### Pin Mapping
+
+```
+Digital Pins:
+0  = RX (Serial, avoid using)
+1  = TX (Serial, avoid using)
+2-12 = General GPIO
+13 = Built-in LED + GPIO
+
+PWM Pins (~ marked on board):
+3, 5, 6, 9, 10, 11
+
+Analog Pins:
+A0-A5 (can also be used as digital GPIO)
+```
+
+### Wiring Examples
+
+#### External LED
+
+```
+Arduino         LED
+───────         ───
+Pin 9 ────────┬──▶│
+                │    └─── GND
+                └─── 220Ω
+```
+
+```bash
+zeroclaw agent -m "Set pin 9 high on Arduino"
+```
+
+#### Button Input
+
+```
+Arduino         Button
+───────         ──────
+Pin 7 ─────────┤  ├──── 5V
+GND ───────────┤  ├
+                └──┘
+```
+
+```bash
+zeroclaw agent -m "Read pin 7 on Arduino"
+```
+
+## Arduino Uno R4 WiFi (Uno Q)
+
+The Uno R4 WiFi has a unique architecture:
+- **Main MCU**: Renesas RA4M1 (ARM Cortex-M4, 48 MHz)
+- **WiFi**: ESP32-S3 co-processor
+- **Transport**: Bridge mode (WebSocket to Arduino Cloud)
+
+### Setup
+
+```bash
+# Configure Uno Q bridge
+zeroclaw peripheral setup-uno-q --host robot.local
+
+# Add to config
+zeroclaw peripheral add arduino-uno-q bridge
+```
+
+<Note>
+Uno R4 WiFi uses a **bridge transport** that connects to the Arduino Cloud IoT platform. This is different from direct serial communication.
+</Note>
+
+## Serial Protocol
+
+The firmware implements a JSON-over-UART protocol:
+
+### Request Format
+
+```json
+{"id":"1","cmd":"gpio_write","args":{"pin":13,"value":1}}
+```
+
+### Response Format
+
+```json
+{"id":"1","ok":true,"result":"done"}
+```
+
+### Supported Commands
+
+| Command | Args | Description |
+|---------|------|-------------|
+| `ping` | None | Health check, returns "pong" |
+| `gpio_read` | `{"pin": N}` | Read digital pin (0 or 1) |
+| `gpio_write` | `{"pin": N, "value": V}` | Write digital pin (0=LOW, 1=HIGH) |
+| `capabilities` | None | Get available GPIO pins and LED pin |
+
+### Testing Manually
+
+```bash
+# Open serial monitor
+screen /dev/ttyUSB0 115200
+
+# Type commands and press Enter:
+{"id":"1","cmd":"ping","args":{}}
+{"id":"2","cmd":"gpio_write","args":{"pin":13,"value":1}}
+{"id":"3","cmd":"gpio_read","args":{"pin":13}}
+{"id":"4","cmd":"capabilities","args":{}}
+
+# Exit: Ctrl+A, then K, then Y
+```
+
+## Firmware Source
+
+The Arduino firmware is written in C++ (Arduino sketch format):
+
+**Location**: `firmware/zeroclaw-arduino/zeroclaw-arduino.ino`
+
+**Key features**:
+- Newline-delimited JSON parsing (no libraries)
+- Pin 0-13 support (digital I/O)
+- Built-in LED (pin 13) support
+- Dynamic capabilities discovery
+- ~2KB compiled size
+
+## Tools Provided
+
+When an Arduino is connected, ZeroClaw exposes:
+
+| Tool | Description |
+|------|-------------|
+| `gpio_read` | Read digital pin value |
+| `gpio_write` | Set digital pin high or low |
+| `hardware_capabilities` | Query available GPIO pins |
+| `arduino_upload` | Upload new sketches to Arduino |
+
+## Advanced: Custom Firmware
+
+To add custom features:
+
+1. Edit `firmware/zeroclaw-arduino/zeroclaw-arduino.ino`
+2. Add new command handlers in `handleLine()`
+3. Upload via Arduino IDE or ZeroClaw
+
+**Example: Add analog read**
+
+```cpp
+if (hasCmd(line, "analog_read")) {
+  int pin = parseArg("pin", line);
+  if (pin < 0 || pin > 5) {
+    Serial.println("{\"id\":\"1\",\"ok\":false,\"error\":\"Invalid analog pin\"}");
+    return;
+  }
+  int value = analogRead(A0 + pin);
+  Serial.print("{\"id\":\"");
+  Serial.print(idBuf);
+  Serial.print("\",\"ok\":true,\"result\":\"");
+  Serial.print(value);
+  Serial.println("\"}");
+  return;
+}
+```
+
+## Troubleshooting
+
+### Serial port not found
+
+```bash
+# Check USB connection
+# Linux
+lsusb | grep -i "CH340\|arduino"
+
+# macOS
+system_profiler SPUSBDataType | grep -i "arduino\|ch340"
+
+# Windows
+# Device Manager > Ports (COM & LPT)
+```
+
+### Permission denied (Linux)
+
+```bash
+# Add user to dialout group
+sudo usermod -aG dialout $USER
+
+# Logout and login, or:
+newgrp dialout
+```
+
+### Upload fails
+
+```bash
+# Check port is correct
+ls /dev/ttyUSB*
+
+# Try manual reset
+# Press reset button on Arduino, then immediately:
+zeroclaw peripheral flash --port /dev/ttyUSB0
+
+# Check avrdude is installed
+avrdude -v
+
+# Ubuntu/Debian
+sudo apt install avrdude
+
+# macOS
+brew install avrdude
+```
+
+### No response from firmware
+
+```bash
+# Reset Arduino
+# Press reset button (small button near USB port)
+
+# Check baud rate
+# Must be 115200 (set in firmware setup())
+
+# Test with Arduino IDE Serial Monitor
+# Tools > Serial Monitor
+# Set to 115200 baud
+# Type: {"id":"1","cmd":"ping","args":{}}
+```
+
+### CH340 driver issues (macOS)
+
+```bash
+# Download CH340 driver
+# https://github.com/adrianmihalko/ch340g-ch34g-ch34x-mac-os-x-driver
+
+# Or use Homebrew
+brew tap mengbo/ch340g-ch34g-ch34x-mac-os-x-driver
+brew install ch340g-ch34g-ch34x-mac-os-x-driver
+
+# Reboot after installation
+```
+
+### Wrong board type
+
+```bash
+# If using Arduino Nano, Mega, etc.
+# Edit firmware/zeroclaw-arduino/zeroclaw-arduino.ino
+# Adjust pin definitions for your board
+
+# Or flash appropriate firmware for your board
+```
+
+## Arduino Shields & Add-ons
+
+Popular shields that work with ZeroClaw:
+
+| Shield | Use Case | Notes |
+|--------|----------|-------|
+| **Motor Shield (L293D)** | Robot drive | Use PWM pins 9, 10, 11 |
+| **Ethernet Shield** | Network control | Alternative to WiFi |
+| **LCD Shield** | Display output | I2C or parallel |
+| **Sensor Shield** | Easy wiring | No soldering needed |
+
+## Performance Notes
+
+- **GPIO speed**: ~100 kHz toggle rate
+- **Serial latency**: ~20ms round-trip
+- **Flash size**: 32KB (firmware uses ~2KB)
+- **RAM**: 2KB (firmware uses ~500 bytes)
+- **Boot time**: ~2 seconds after reset
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Supported Boards" icon="microchip" href="/hardware/supported-boards">
+    Compare all hardware platforms
+  </Card>
+  <Card title="STM32 Nucleo" icon="microchip" href="/hardware/peripherals/stm32-nucleo">
+    More powerful ARM-based alternative
+  </Card>
+  <Card title="ESP32 Setup" icon="wifi" href="/hardware/peripherals/esp32">
+    Arduino-like board with WiFi
+  </Card>
+  <Card title="Hardware Architecture" icon="diagram-project" href="/architecture/hardware-peripherals-design">
+    Understand the peripheral system
+  </Card>
+</CardGroup>
+
+## Reference
+
+- [Arduino Uno Product Page](https://store.arduino.cc/products/arduino-uno-rev3)
+- [Arduino Language Reference](https://www.arduino.cc/reference/en/)
+- [ATmega328P Datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf)
+- [Arduino Uno R4 WiFi](https://docs.arduino.cc/hardware/uno-r4-wifi)

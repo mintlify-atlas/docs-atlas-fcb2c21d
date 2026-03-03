@@ -1,0 +1,700 @@
+---
+title: Configuration Guide
+description: Complete reference for configuring ZeroClaw providers, channels, tools, and runtime options
+---
+
+# Configuration Guide
+
+ZeroClaw uses a TOML-based configuration system with environment variable overrides and secure secret storage.
+
+## Configuration Files
+
+After running `zeroclaw onboard`, you'll find:
+
+```bash
+~/.zeroclaw/
+├── config.toml          # Main configuration file
+├── .secret_key          # Encryption key for secrets (DO NOT COMMIT)
+├── active_workspace.toml # Workspace path marker (optional)
+├── workspace/           # Agent workspace directory
+└── memory/              # Conversation history (backend-dependent)
+```
+
+<Warning>
+  **Never commit `.secret_key` to version control.** Add it to `.gitignore`:
+  
+  ```bash
+  echo ".secret_key" >> ~/.gitignore
+  ```
+</Warning>
+
+## Configuration Resolution
+
+ZeroClaw loads configuration in this order (later sources override earlier):
+
+<Steps>
+  <Step title="Default Values">
+    Built-in defaults from `src/config/schema.rs`:
+    - `default_provider`: `"openrouter"`
+    - `default_model`: `"anthropic/claude-sonnet-4.6"`
+    - `default_temperature`: `0.7`
+  </Step>
+  
+  <Step title="config.toml">
+    User configuration file at `~/.zeroclaw/config.toml` or path specified via `--config-dir`
+  </Step>
+  
+  <Step title="Environment Variables">
+    Variables prefixed with `ZEROCLAW_` or provider-specific keys:
+    - `ZEROCLAW_API_KEY` or `API_KEY`
+    - `ZEROCLAW_PROVIDER`
+    - `ZEROCLAW_MODEL`
+    - `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, etc.
+  </Step>
+  
+  <Step title="CLI Flags">
+    Command-line arguments take highest precedence:
+    ```bash
+    zeroclaw agent --provider anthropic --model claude-sonnet-4.6
+    ```
+  </Step>
+</Steps>
+
+## Core Configuration
+
+### Provider Settings
+
+```toml config.toml
+# Default provider (openrouter, anthropic, openai, ollama, etc.)
+default_provider = "openrouter"
+
+# API key (encrypted at rest with ChaCha20-Poly1305)
+api_key = "sk-or-v1-..."
+
+# Base URL override for self-hosted or proxied endpoints
+api_url = "http://localhost:11434"  # Example: local Ollama
+
+# Default model routed through the provider
+default_model = "anthropic/claude-sonnet-4.6"
+
+# Temperature (0.0 = deterministic, 2.0 = very creative)
+default_temperature = 0.7
+
+# Optional API protocol mode for custom: providers
+provider_api = "open-ai-chat-completions"  # or "open-ai-responses"
+```
+
+<Info>
+  **Supported Providers**: anthropic, openai, openrouter, groq, mistral, deepseek, xai, fireworks, together-ai, cohere, moonshot, glm, minimax, qwen, gemini, ollama, vllm, sglang, venice, and custom OpenAI-compatible endpoints.
+</Info>
+
+### Multiple Provider Profiles
+
+Define named provider configurations (Codex app-server compatible):
+
+```toml
+[model_providers.fast]
+provider = "groq"
+api_key = "gsk_..."
+model = "llama-3.3-70b-versatile"
+temperature = 0.3
+
+[model_providers.reasoning]
+provider = "anthropic"
+api_key = "sk-ant-..."
+model = "claude-sonnet-4.6"
+temperature = 0.7
+
+[model_providers.local]
+provider = "ollama"
+api_url = "http://localhost:11434"
+model = "llama3.2"
+temperature = 0.5
+```
+
+Use profiles via CLI:
+
+```bash
+zeroclaw agent --provider-profile fast
+```
+
+### Provider-Specific Overrides
+
+```toml
+[provider]
+# Anthropic-specific settings
+anthropic_version = "2023-06-01"
+
+# OpenAI-specific
+openai_organization = "org-..."
+
+# Model routing for hint: prefixes
+[provider.hints]
+fast = "groq/llama-3.3-70b"
+reasoning = "anthropic/claude-sonnet-4.6"
+local = "ollama/llama3.2"
+```
+
+### Environment Variable Reference
+
+<CodeGroup>
+  ```bash Generic
+  # Fallback API key (lowest priority)
+  export API_KEY="your-api-key"
+  export ZEROCLAW_API_KEY="your-api-key"
+  
+  # Provider and model
+  export ZEROCLAW_PROVIDER="openrouter"
+  export ZEROCLAW_MODEL="anthropic/claude-sonnet-4.6"
+  export ZEROCLAW_TEMPERATURE="0.7"
+  
+  # Workspace override
+  export ZEROCLAW_WORKSPACE="/path/to/workspace"
+  
+  # Reasoning mode (extended thinking)
+  export ZEROCLAW_REASONING_ENABLED="true"
+  ```
+  
+  ```bash Provider-Specific
+  # OpenRouter
+  export OPENROUTER_API_KEY="sk-or-v1-..."
+  
+  # Anthropic
+  export ANTHROPIC_API_KEY="sk-ant-..."
+  export ANTHROPIC_OAUTH_TOKEN="..."  # For Claude Code OAuth
+  
+  # OpenAI
+  export OPENAI_API_KEY="sk-..."
+  
+  # Gemini
+  export GEMINI_API_KEY="..."
+  export GOOGLE_API_KEY="..."  # Alias for Gemini
+  
+  # Other providers
+  export GROQ_API_KEY="gsk_..."
+  export DEEPSEEK_API_KEY="..."
+  export MISTRAL_API_KEY="..."
+  export XAI_API_KEY="..."  # Grok
+  export TOGETHER_API_KEY="..."
+  export FIREWORKS_API_KEY="..."
+  export PERPLEXITY_API_KEY="..."
+  export COHERE_API_KEY="..."
+  export MOONSHOT_API_KEY="..."  # Kimi
+  export GLM_API_KEY="..."  # Zhipu
+  export MINIMAX_API_KEY="..."
+  export ZAI_API_KEY="id.secret"  # Z.AI GLM
+  export VENICE_API_KEY="..."
+  ```
+  
+  ```bash Local/Self-Hosted
+  # Ollama
+  export OLLAMA_HOST="http://localhost:11434"
+  
+  # Custom OpenAI-compatible endpoint
+  export ZEROCLAW_PROVIDER="custom:https://api.example.com/v1"
+  export ZEROCLAW_API_KEY="your-key"
+  ```
+</CodeGroup>
+
+## Autonomy and Security
+
+### Autonomy Levels
+
+Control tool execution approval:
+
+```toml
+[autonomy]
+# Global autonomy level: approve, supervised, auto
+level = "approve"  # Require approval for all tools
+
+# Per-tool overrides
+file_operations = "supervised"  # Auto-approve reads, ask for writes
+shell_commands = "approve"      # Always require approval
+web_search = "auto"             # Full autonomy
+browser_automation = "approve"
+
+# Domain allowlist for web fetch/search
+allowed_domains = [
+  "github.com",
+  "docs.rs",
+  "stackoverflow.com"
+]
+
+# Command allowlist for shell tool
+allowed_commands = [
+  "ls", "cat", "grep", "find",
+  "git status", "git diff", "git log"
+]
+```
+
+<Info>
+  **Autonomy Modes**:
+  - `approve`: Prompt user for every execution
+  - `supervised`: Auto-approve safe operations (reads), prompt for risky ones (writes/deletes)
+  - `auto`: Full autonomy within workspace boundaries
+</Info>
+
+### Security Settings
+
+```toml
+[security]
+# Enable OTP pairing for gateway access
+pairing_required = true
+
+# Workspace root (agent cannot access files outside)
+workspace_root = "/home/user/projects/my-agent-workspace"
+
+# Secret encryption (ChaCha20-Poly1305)
+encrypt_secrets = true
+
+# Sandboxing backend: none, landlock (Linux), bubblewrap
+sandbox_backend = "landlock"
+
+# Domain matcher for web tools
+[security.domain_matcher]
+mode = "allowlist"  # or "denylist"
+patterns = [
+  "*.github.com",
+  "*.rust-lang.org"
+]
+```
+
+<Warning>
+  Changing `workspace_root` after onboarding requires updating file paths in your config. The agent cannot access files outside this directory.
+</Warning>
+
+## Gateway Configuration
+
+```toml
+[gateway]
+# Bind address (127.0.0.1 = localhost only, 0.0.0.0 = all interfaces)
+host = "127.0.0.1"
+port = 3000
+
+# Enable OTP pairing
+pairing_required = true
+
+# Allow public bind (0.0.0.0) without confirmation
+allow_public_bind = false
+
+# Rate limiting
+max_requests_per_minute = 60
+
+# Request size limits (bytes)
+max_request_body_size = 10485760  # 10MB
+
+# CORS settings
+cors_allowed_origins = ["http://localhost:3001"]
+
+# SSE streaming timeout (seconds)
+stream_timeout = 300
+```
+
+Start the gateway:
+
+```bash
+zeroclaw gateway
+
+# Or override settings
+zeroclaw gateway --host 0.0.0.0 --port 8080
+```
+
+<Tip>
+  Use environment variables for dynamic port binding:
+  
+  ```bash
+  export ZEROCLAW_GATEWAY_PORT=8080
+  export ZEROCLAW_GATEWAY_HOST=0.0.0.0
+  zeroclaw gateway
+  ```
+</Tip>
+
+## Memory Configuration
+
+```toml
+[memory]
+# Backend: sqlite, postgres, markdown, lucid, none
+backend = "sqlite"
+
+# SQLite path (relative to workspace or absolute)
+sqlite_path = "memory/conversations.db"
+
+# Markdown memory directory
+markdown_dir = "memory/markdown"
+
+# PostgreSQL connection (when backend = "postgres")
+[memory.postgres]
+db_url = "postgres://user:pass@localhost/zeroclaw"
+connect_timeout_secs = 5
+
+# Embeddings for semantic search
+[memory.embeddings]
+enabled = true
+provider = "openai"  # or "cohere", "voyage", etc.
+model = "text-embedding-3-small"
+api_key = "sk-..."  # Or use OPENAI_API_KEY env var
+
+# Vector store
+[memory.vector_store]
+backend = "lucid"  # or "sqlite" for simple embedding storage
+lucid_index_path = "memory/lucid.idx"
+```
+
+### Memory Backend Comparison
+
+| Backend | Pros | Cons | Use Case |
+|---------|------|------|----------|
+| **sqlite** | Zero-config, embedded, ACID | Single-writer | Default, single-instance |
+| **postgres** | Multi-instance, distributed | Requires PostgreSQL server | Production, scaled deployments |
+| **markdown** | Human-readable, git-friendly | No search, slow queries | Documentation, audit trails |
+| **lucid** | Fast vector search, semantic | Requires embeddings | RAG, semantic memory |
+| **none** | Stateless, no persistence | Loses context | One-shot queries |
+
+## Channel Configuration
+
+```toml
+[channels_config]
+enabled_channels = ["telegram", "discord", "gateway"]
+
+# Telegram
+[channels_config.telegram]
+bot_token = "123456:ABC-DEF..."
+allowed_users = [12345678, 87654321]  # Telegram user IDs
+
+# Discord
+[channels_config.discord]
+bot_token = "NzQy..."
+guild_id = "123456789"
+channel_id = "987654321"
+allowed_roles = ["admin", "developer"]
+
+# Slack
+[channels_config.slack]
+oauth_token = "xoxb-..."
+team_id = "T..."
+channel_id = "C..."
+
+# Matrix (with E2EE)
+[channels_config.matrix]
+homeserver = "https://matrix.org"
+username = "zeroclaw_bot"
+password = "..."  # Stored encrypted
+device_id = "ZEROBOT"
+enable_e2ee = true
+
+# Email (IMAP/SMTP)
+[channels_config.email]
+imap_host = "imap.gmail.com"
+imap_port = 993
+imap_username = "bot@example.com"
+imap_password = "..."
+
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+smtp_username = "bot@example.com"
+smtp_password = "..."
+```
+
+<Note>
+  Channel-specific configuration guides:
+  - [Telegram Setup](https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/TESTING_TELEGRAM.md)
+  - [Matrix E2EE](https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/matrix-e2ee-guide.md)
+  - [Mattermost Setup](https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/mattermost-setup.md)
+</Note>
+
+## Runtime Configuration
+
+```toml
+[runtime]
+# Runtime adapter: native (default), docker, wasm
+adapter = "native"
+
+# Docker runtime settings
+[runtime.docker]
+image = "zeroclaw-runtime:latest"
+network = "bridge"
+volumes = ["/workspace:/workspace"]
+
+# WASM runtime (sandboxed tools)
+[runtime.wasm]
+enabled = true
+max_memory_mb = 128
+max_execution_time_ms = 5000
+```
+
+## Research Phase
+
+```toml
+[research]
+# Enable proactive information gathering
+enabled = true
+
+# Maximum research steps before generating response
+max_steps = 3
+
+# Tools allowed during research phase
+allowed_tools = ["web_search", "web_fetch", "file_read"]
+
+# Auto-research triggers (patterns in user messages)
+triggers = [
+  "latest", "recent", "current",
+  "what is", "explain", "how does"
+]
+```
+
+<Info>
+  Research phase runs **before** response generation. The agent gathers facts via tools, then uses that context to answer accurately.
+</Info>
+
+## Reliability Settings
+
+```toml
+[reliability]
+# Retry failed provider requests
+max_retries = 3
+initial_backoff_ms = 1000
+max_backoff_ms = 30000
+backoff_multiplier = 2.0
+
+# Fallback providers
+fallback_providers = [
+  { provider = "openrouter", model = "anthropic/claude-sonnet-4.6" },
+  { provider = "groq", model = "llama-3.3-70b-versatile" }
+]
+
+# Timeout settings
+provider_timeout_secs = 120
+tool_timeout_secs = 60
+```
+
+## Observability
+
+```toml
+[observability]
+# Backends: prometheus, opentelemetry, none
+backends = ["prometheus"]
+
+# Prometheus metrics
+[observability.prometheus]
+listen_addr = "127.0.0.1:9090"
+
+# OpenTelemetry (OTLP)
+[observability.opentelemetry]
+otlp_endpoint = "http://localhost:4317"
+service_name = "zeroclaw-agent"
+
+# Enable detailed traces
+[observability.tracing]
+level = "info"  # trace, debug, info, warn, error
+```
+
+Enable OpenTelemetry:
+
+```bash
+cargo install zeroclaw --features observability-otel
+```
+
+## Proxy Configuration
+
+```toml
+[proxy]
+enabled = true
+scope = "zeroclaw"  # environment, zeroclaw, or services
+
+# HTTP/HTTPS proxy
+http_proxy = "http://proxy.example.com:8080"
+https_proxy = "http://proxy.example.com:8080"
+all_proxy = "socks5://proxy.example.com:1080"
+
+# Bypass proxy for these hosts
+no_proxy = "localhost,127.0.0.1,.local"
+
+# Per-service proxy rules
+services = [
+  "provider.openai",
+  "provider.anthropic",
+  "channel.telegram"
+]
+```
+
+Environment variable equivalents:
+
+```bash
+export ZEROCLAW_PROXY_ENABLED=true
+export ZEROCLAW_HTTP_PROXY="http://proxy.example.com:8080"
+export ZEROCLAW_HTTPS_PROXY="http://proxy.example.com:8080"
+export ZEROCLAW_NO_PROXY="localhost,127.0.0.1"
+```
+
+## Tool Configuration
+
+```toml
+[tools]
+# Enable/disable specific tools
+enabled_tools = [
+  "shell", "file_read", "file_write", "web_search",
+  "web_fetch", "browser", "git", "memory"
+]
+
+# Web search settings
+[tools.web_search]
+provider = "duckduckgo"  # or "brave"
+max_results = 5
+timeout_secs = 15
+
+# Brave search (requires API key)
+# provider = "brave"
+# brave_api_key = "..."
+
+# Browser automation
+[tools.browser]
+backend = "selenium"  # or "cdp" (Chrome DevTools Protocol)
+webdriver_url = "http://localhost:4444"
+headless = true
+default_timeout_secs = 30
+
+# WASM plugin tools
+[tools.wasm_plugins]
+enabled = true
+plugin_dir = "~/.zeroclaw/plugins"
+max_memory_mb = 128
+```
+
+## Scheduler and Cron
+
+```toml
+[scheduler]
+enabled = true
+check_interval_secs = 60
+
+# Cron jobs
+[[cron.jobs]]
+name = "daily_summary"
+schedule = "0 9 * * *"  # 9 AM daily
+command = "summarize_yesterday"
+
+[[cron.jobs]]
+name = "weekly_backup"
+schedule = "0 0 * * 0"  # Midnight every Sunday
+command = "backup_workspace"
+```
+
+Cron schedule format: `minute hour day_of_month month day_of_week`
+
+## Hardware and Peripherals
+
+```toml
+[peripherals]
+enabled = true
+
+# Raspberry Pi GPIO
+[peripherals.rpi_gpio]
+enabled = true
+allowed_pins = [17, 27, 22]  # BCM pin numbers
+
+# STM32 serial communication
+[peripherals.stm32]
+serial_port = "/dev/ttyACM0"
+baud_rate = 115200
+
+# USB device discovery
+[peripherals.usb]
+enabled = true
+allowed_vendor_ids = [0x0483]  # STMicroelectronics
+```
+
+Enable hardware support:
+
+```bash
+cargo install zeroclaw --features "hardware,peripheral-rpi"
+```
+
+## Export and Validate Configuration
+
+```bash
+# Export current config as JSON schema
+zeroclaw config export
+
+# Validate config file
+zeroclaw config validate
+
+# Show active configuration (with defaults)
+zeroclaw config show
+
+# Print config path
+zeroclaw config path
+```
+
+## Example Complete Configuration
+
+```toml
+# ~/.zeroclaw/config.toml
+
+default_provider = "openrouter"
+api_key = "sk-or-v1-..."
+default_model = "anthropic/claude-sonnet-4.6"
+default_temperature = 0.7
+
+[autonomy]
+level = "supervised"
+file_operations = "auto"
+shell_commands = "approve"
+
+[security]
+pairing_required = true
+workspace_root = "/home/user/zeroclaw-workspace"
+
+[gateway]
+host = "127.0.0.1"
+port = 3000
+pairing_required = true
+
+[memory]
+backend = "sqlite"
+sqlite_path = "memory/conversations.db"
+
+[memory.embeddings]
+enabled = true
+provider = "openai"
+model = "text-embedding-3-small"
+
+[channels_config]
+enabled_channels = ["telegram", "gateway"]
+
+[channels_config.telegram]
+bot_token = "123456:ABC-DEF..."
+allowed_users = [12345678]
+
+[research]
+enabled = true
+max_steps = 3
+
+[reliability]
+max_retries = 3
+fallback_providers = [
+  { provider = "groq", model = "llama-3.3-70b-versatile" }
+]
+
+[observability]
+backends = ["prometheus"]
+
+[observability.prometheus]
+listen_addr = "127.0.0.1:9090"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Provider Reference" icon="plug" href="/providers-reference">
+    Detailed guide for all supported AI providers
+  </Card>
+  <Card title="Channel Reference" icon="comments" href="/channels-reference">
+    Setup guides for Telegram, Discord, Slack, Matrix, and more
+  </Card>
+  <Card title="Tool Reference" icon="wrench" href="/tools-reference">
+    Built-in tools and custom tool development
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference">
+    Trait interfaces and advanced customization
+  </Card>
+</CardGroup>

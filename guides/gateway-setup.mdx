@@ -1,0 +1,606 @@
+---
+title: Setting Up the HTTP Gateway
+description: Learn how to configure and secure ZeroClaw's HTTP gateway
+---
+
+The HTTP gateway exposes ZeroClaw's capabilities via REST API, webhooks, WebSocket, and a web dashboard. It's built on Axum with proper HTTP/1.1 compliance, security, and rate limiting.
+
+## Overview
+
+The gateway provides:
+
+- **REST API**: Full agent control via HTTP
+- **Webhooks**: Receive messages from external platforms
+- **WebSocket**: Real-time bidirectional communication
+- **Web Dashboard**: Browser-based UI for monitoring and control
+- **OpenAI Compatibility**: Drop-in replacement for OpenAI API
+- **SSE Events**: Real-time event streaming
+
+## Quick Start
+
+<Steps>
+
+### Start the Gateway
+
+```bash
+zeroclaw gateway
+```
+
+Output:
+```
+🦀 ZeroClaw Gateway listening on http://127.0.0.1:42617
+  🌐 Web Dashboard: http://127.0.0.1:42617/
+  POST /pair      — pair a new client (X-Pairing-Code header)
+  POST /webhook   — {"message": "your prompt"}
+  POST /api/chat  — {"message": "...", "context": [...]}
+  POST /v1/chat/completions — OpenAI-compatible
+  GET  /health    — health check
+  GET  /metrics   — Prometheus metrics
+  🔐 PAIRING REQUIRED — use this one-time code:
+     ┌──────────────┐
+     │  ABCD-1234  │
+     └──────────────┘
+     Send: POST /pair with header X-Pairing-Code: ABCD-1234
+```
+
+### Pair a Client
+
+Exchange the one-time code for a permanent token:
+
+```bash
+curl -X POST http://localhost:42617/pair \
+  -H "X-Pairing-Code: ABCD-1234"
+```
+
+Response:
+```json
+{
+  "paired": true,
+  "persisted": true,
+  "token": "zcl_live_abc123...",
+  "message": "Save this token — use it as Authorization: Bearer <token>"
+}
+```
+
+### Make API Calls
+
+Use the token for authenticated requests:
+
+```bash
+curl -X POST http://localhost:42617/webhook \
+  -H "Authorization: Bearer zcl_live_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello, ZeroClaw!"}'
+```
+
+</Steps>
+
+## Configuration
+
+Configure the gateway in `config.toml`:
+
+```toml
+[gateway]
+port = 42617
+host = "127.0.0.1"  # Loopback by default (safe)
+allow_public_bind = false  # Must be true for 0.0.0.0
+
+# Security
+require_pairing = true  # Enable token-based auth
+paired_tokens = []  # Auto-populated after pairing
+
+# Rate limiting
+pair_rate_limit_per_minute = 10
+webhook_rate_limit_per_minute = 60
+rate_limit_max_keys = 10000
+
+# Idempotency
+idempotency_ttl_secs = 3600
+idempotency_max_keys = 10000
+
+# Proxy/forwarded headers
+trust_forwarded_headers = false  # Enable for reverse proxies
+
+# Node control (experimental)
+[gateway.node_control]
+enabled = false
+auth_token = ""  # Optional additional auth
+allowed_node_ids = []
+```
+
+## Security
+
+### Pairing System
+
+The gateway uses a secure pairing flow:
+
+1. **One-time code**: Generated on startup (8-character alphanumeric)
+2. **Rate limiting**: 10 pairing attempts per minute per IP
+3. **Lockout**: 5-minute lockout after 3 failed attempts
+4. **Bearer tokens**: Long-lived tokens (256-bit random)
+5. **Persistence**: Tokens saved to config.toml
+
+### Public Bind Protection
+
+The gateway refuses unsafe configurations:
+
+```toml
+# ❌ This will fail without a tunnel or explicit opt-in:
+[gateway]
+host = "0.0.0.0"
+allow_public_bind = false
+```
+
+Error:
+```
+🛑 Refusing to bind to 0.0.0.0 — gateway would be exposed to the internet.
+Fix: use --host 127.0.0.1 (default), configure a tunnel, or set
+[gateway] allow_public_bind = true in config.toml (NOT recommended).
+```
+
+Safe options:
+
+1. **Use a tunnel** (recommended):
+   ```toml
+   [tunnel]
+   provider = "cloudflare"
+   
+   [tunnel.cloudflare]
+   token = "your-token"
+   ```
+
+2. **Explicit opt-in** (for internal networks only):
+   ```toml
+   [gateway]
+   host = "0.0.0.0"
+   allow_public_bind = true  # ⚠️ Use with caution
+   ```
+
+### Rate Limiting
+
+The gateway implements sliding-window rate limiting:
+
+```rust
+pub const RATE_LIMIT_WINDOW_SECS: u64 = 60;
+
+pub struct GatewayRateLimiter {
+    pair: SlidingWindowRateLimiter,      // Pairing endpoint
+    webhook: SlidingWindowRateLimiter,   // Webhook endpoint
+}
+
+impl GatewayRateLimiter {
+    fn new(pair_per_minute: u32, webhook_per_minute: u32, max_keys: usize) -> Self {
+        let window = Duration::from_secs(RATE_LIMIT_WINDOW_SECS);
+        Self {
+            pair: SlidingWindowRateLimiter::new(pair_per_minute, window, max_keys),
+            webhook: SlidingWindowRateLimiter::new(webhook_per_minute, window, max_keys),
+        }
+    }
+}
+```
+
+Rate limits are per-IP and configurable:
+
+```toml
+[gateway]
+pair_rate_limit_per_minute = 10      # Pairing attempts
+webhook_rate_limit_per_minute = 60   # Webhook calls
+rate_limit_max_keys = 10000          # Max tracked IPs
+```
+
+### Webhook Secrets
+
+Protect webhook endpoints with shared secrets:
+
+```toml
+[channels.webhook]
+secret = "your-secret-here"
+```
+
+The gateway validates requests:
+
+```rust
+if let Some(expected_hash) = &state.webhook_secret_hash {
+    let provided = headers
+        .get("X-Webhook-Secret")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    
+    let provided_hash = hash_webhook_secret(provided);
+    
+    if !constant_time_eq(&expected_hash, &provided_hash) {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid secret"})));
+    }
+}
+```
+
+## API Endpoints
+
+### Core Endpoints
+
+<AccordionGroup>
+  <Accordion title="POST /pair - Pairing">
+    Exchange pairing code for bearer token.
+    
+    **Request:**
+    ```bash
+    curl -X POST http://localhost:42617/pair \
+      -H "X-Pairing-Code: ABCD-1234"
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "paired": true,
+      "persisted": true,
+      "token": "zcl_live_abc123...",
+      "message": "Save this token"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="POST /webhook - Simple Chat">
+    Send a message to the agent (no tools).
+    
+    **Request:**
+    ```bash
+    curl -X POST http://localhost:42617/webhook \
+      -H "Authorization: Bearer zcl_live_abc123..." \
+      -H "Content-Type: application/json" \
+      -d '{"message": "Hello!"}'
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "response": "Hi! How can I help you?"
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="POST /api/chat - Agent Chat with Tools">
+    Full agent loop with tool execution.
+    
+    **Request:**
+    ```bash
+    curl -X POST http://localhost:42617/api/chat \
+      -H "Authorization: Bearer zcl_live_abc123..." \
+      -H "Content-Type: application/json" \
+      -d '{
+        "message": "What files are in the current directory?",
+        "session_id": "optional-session-id"
+      }'
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "response": "I found 5 files: config.toml, main.rs, ...",
+      "tool_calls": [
+        {"tool": "shell", "args": {"command": "ls"}}
+      ]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="POST /v1/chat/completions - OpenAI Compatible">
+    Drop-in replacement for OpenAI API.
+    
+    **Request:**
+    ```bash
+    curl -X POST http://localhost:42617/v1/chat/completions \
+      -H "Authorization: Bearer zcl_live_abc123..." \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "claude-sonnet-4",
+        "messages": [
+          {"role": "user", "content": "Hello!"}
+        ]
+      }'
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "id": "chatcmpl-123",
+      "object": "chat.completion",
+      "model": "claude-sonnet-4",
+      "choices": [{
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Hi! How can I help?"
+        },
+        "finish_reason": "stop"
+      }]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="GET /health - Health Check">
+    Check gateway status (always public).
+    
+    **Request:**
+    ```bash
+    curl http://localhost:42617/health
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "status": "ok",
+      "paired": true,
+      "require_pairing": true,
+      "runtime": {
+        "uptime_seconds": 12345,
+        "components": {"gateway": "ok", "memory": "ok"}
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="GET /metrics - Prometheus Metrics">
+    Prometheus-compatible metrics (requires auth or localhost).
+    
+    **Request:**
+    ```bash
+    curl http://localhost:42617/metrics
+    ```
+    
+    **Response:**
+    ```
+    # TYPE zeroclaw_requests_total counter
+    zeroclaw_requests_total{endpoint="webhook"} 42
+    # TYPE zeroclaw_llm_latency_seconds histogram
+    zeroclaw_llm_latency_seconds_bucket{le="1.0"} 10
+    ...
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Dashboard API
+
+All dashboard endpoints require bearer token authentication:
+
+- `GET /api/status` - System status overview
+- `GET /api/config` - Current configuration (secrets masked)
+- `PUT /api/config` - Update configuration
+- `GET /api/tools` - List available tools
+- `GET /api/memory` - List/search memory entries
+- `POST /api/memory` - Store memory entry
+- `DELETE /api/memory/:key` - Delete memory entry
+- `GET /api/cost` - Cost tracking summary
+- `GET /api/cron` - List cron jobs
+- `POST /api/cron` - Add cron job
+- `DELETE /api/cron/:id` - Remove cron job
+- `GET /api/integrations` - List integrations
+- `POST /api/doctor` - Run diagnostics
+- `GET /api/events` - SSE event stream
+
+## WebSocket Chat
+
+Real-time bidirectional chat via WebSocket:
+
+```javascript
+const ws = new WebSocket('ws://localhost:42617/ws/chat?token=zcl_live_abc123...');
+
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    message: 'Hello via WebSocket!',
+    session_id: 'my-session'
+  }));
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Agent:', data.response);
+};
+```
+
+## Webhook Integrations
+
+The gateway supports webhooks from multiple platforms:
+
+### WhatsApp
+
+```toml
+[channels.whatsapp]
+access_token = "your-token"
+phone_number_id = "123456789"
+verify_token = "your-verify-token"
+app_secret = "your-app-secret"  # For signature verification
+allowed_numbers = ["*"]
+```
+
+Endpoints:
+- `GET /whatsapp` - Meta webhook verification
+- `POST /whatsapp` - Receive messages
+
+### GitHub
+
+```toml
+[channels.github]
+access_token = "ghp_your_token"
+webhook_secret = "your-webhook-secret"
+allowed_repos = ["owner/repo"]
+```
+
+Endpoint:
+- `POST /github` - Issue/PR comment webhook
+
+### Nextcloud Talk
+
+```toml
+[channels.nextcloud_talk]
+base_url = "https://cloud.example.com"
+app_token = "your-token"
+webhook_secret = "your-secret"
+allowed_users = ["*"]
+```
+
+Endpoint:
+- `POST /nextcloud-talk` - Bot webhook
+
+## Reverse Proxy Setup
+
+For production, use a reverse proxy like Nginx or Caddy:
+
+### Nginx
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name zeroclaw.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/zeroclaw.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/zeroclaw.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:42617;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+Enable forwarded header trust:
+
+```toml
+[gateway]
+trust_forwarded_headers = true
+```
+
+### Caddy
+
+```
+zeroclaw.example.com {
+    reverse_proxy localhost:42617
+}
+```
+
+## Tunneling
+
+For development or testing, use tunnels:
+
+### Cloudflare Tunnel
+
+```toml
+[tunnel]
+provider = "cloudflare"
+
+[tunnel.cloudflare]
+token = "your-cloudflared-token"
+```
+
+### Ngrok
+
+```toml
+[tunnel]
+provider = "ngrok"
+
+[tunnel.ngrok]
+auth_token = "your-ngrok-token"
+domain = "zeroclaw.ngrok.app"  # Optional
+```
+
+## Docker Setup
+
+Run the gateway in Docker:
+
+```yaml
+services:
+  zeroclaw:
+    image: ghcr.io/zeroclaw-labs/zeroclaw:latest
+    container_name: zeroclaw
+    restart: unless-stopped
+    
+    environment:
+      - API_KEY=${API_KEY}
+      - PROVIDER=openrouter
+      - ZEROCLAW_ALLOW_PUBLIC_BIND=true
+      - ZEROCLAW_GATEWAY_PORT=42617
+      
+    volumes:
+      - zeroclaw-data:/zeroclaw-data
+      
+    ports:
+      - "42617:42617"
+
+volumes:
+  zeroclaw-data:
+```
+
+Start:
+
+```bash
+docker compose up -d
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always use pairing in production">
+    ```toml
+    [gateway]
+    require_pairing = true  # Never disable this in production
+    ```
+  </Accordion>
+
+  <Accordion title="Use HTTPS via reverse proxy or tunnel">
+    Never expose the gateway directly on HTTP in production. Use:
+    - Reverse proxy with TLS (Nginx, Caddy)
+    - Cloudflare Tunnel
+    - Ngrok with custom domain
+  </Accordion>
+
+  <Accordion title="Configure rate limits appropriately">
+    Adjust based on your traffic:
+    
+    ```toml
+    [gateway]
+    pair_rate_limit_per_minute = 10      # Low for pairing
+    webhook_rate_limit_per_minute = 120  # Higher for webhooks
+    ```
+  </Accordion>
+
+  <Accordion title="Monitor with Prometheus">
+    Scrape `/metrics` endpoint:
+    
+    ```yaml
+    scrape_configs:
+      - job_name: 'zeroclaw'
+        static_configs:
+          - targets: ['localhost:42617']
+        bearer_token: 'your-token'
+    ```
+  </Accordion>
+
+  <Accordion title="Use idempotency for critical webhooks">
+    Send `X-Idempotency-Key` header:
+    
+    ```bash
+    curl -X POST http://localhost:42617/webhook \
+      -H "Authorization: Bearer token" \
+      -H "X-Idempotency-Key: $(uuidgen)" \
+      -d '{"message": "important"}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deployment" icon="rocket" href="/guides/deployment">
+    Deploy ZeroClaw to production
+  </Card>
+  <Card title="Creating Channels" icon="comments" href="/guides/creating-channels">
+    Add messaging platform support
+  </Card>
+</CardGroup>

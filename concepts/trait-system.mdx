@@ -1,0 +1,584 @@
+---
+title: Trait-Driven Design
+description: Understanding ZeroClaw's trait-based extension system
+---
+
+# Trait-Driven Design Pattern
+
+ZeroClaw's architecture is built on Rust traits, which define explicit extension points for swappable components. This design provides compile-time guarantees, type safety, and clear boundaries between subsystems.
+
+## Why Traits?
+
+From `AGENTS.md` §2:
+
+> **Trait + factory architecture is the stability backbone**
+> - Extension points are intentionally explicit and swappable
+> - Most features should be added via trait implementation + factory registration, not cross-cutting rewrites
+
+Benefits:
+
+- **Compile-Time Safety**: Invalid implementations won't compile
+- **Explicit Contracts**: Trait signatures document what each component must provide
+- **Zero-Cost Abstraction**: Trait dispatch is optimized away in release builds
+- **Testability**: Easy to create mock implementations for testing
+- **Parallel Development**: Multiple implementations can be developed independently
+
+## Core Traits Overview
+
+| Trait | Module | Purpose |
+|-------|--------|----------|
+| `Provider` | `src/providers/traits.rs` | Model inference backends |
+| `Channel` | `src/channels/traits.rs` | Messaging platform integrations |
+| `Tool` | `src/tools/traits.rs` | Agent capabilities (shell, files, etc.) |
+| `Memory` | `src/memory/traits.rs` | Persistence backends |
+| `Sandbox` | `src/security/traits.rs` | OS-level isolation |
+| `Peripheral` | `src/peripherals/traits.rs` | Hardware board interfaces |
+| `RuntimeAdapter` | `src/runtime/traits.rs` | Execution environment adapters |
+| `Observer` | `src/observability/traits.rs` | Telemetry and observability |
+
+## Provider Trait
+
+The `Provider` trait defines the interface for LLM backends:
+
+```rust
+#[async_trait]
+pub trait Provider: Send + Sync {
+    /// Query provider capabilities (native tools, vision, etc.)
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
+    /// Convert tool specs to provider-native format
+    fn convert_tools(&self, tools: &[ToolSpec]) -> ToolsPayload {
+        ToolsPayload::PromptGuided {
+            instructions: build_tool_instructions_text(tools),
+        }
+    }
+
+    /// Simple one-shot chat
+    async fn simple_chat(
+        &self,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String>;
+
+    /// Chat with system prompt
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String>;
+
+    /// Structured chat with tool support
+    async fn chat(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<ChatResponse>;
+
+    /// Check if native tool calling is supported
+    fn supports_native_tools(&self) -> bool {
+        self.capabilities().native_tool_calling
+    }
+
+    /// Warm up HTTP connection pool
+    async fn warmup(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+```
+
+### Provider Capabilities
+
+Providers declare their capabilities to enable intelligent adaptation:
+
+```rust
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderCapabilities {
+    /// Native tool calling via API primitives
+    pub native_tool_calling: bool,
+    /// Vision / image input support
+    pub vision: bool,
+}
+```
+
+**Example - OpenAI Provider:**
+
+```rust
+pub struct OpenAiProvider {
+    base_url: String,
+    credential: Option<String>,
+    max_tokens_override: Option<u32>,
+}
+
+#[async_trait]
+impl Provider for OpenAiProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            native_tool_calling: true,
+            vision: true,
+        }
+    }
+
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String> {
+        let mut messages = Vec::new();
+        if let Some(sys) = system_prompt {
+            messages.push(Message {
+                role: "system".into(),
+                content: sys.into(),
+            });
+        }
+        messages.push(Message {
+            role: "user".into(),
+            content: message.into(),
+        });
+        
+        // Send to OpenAI API...
+    }
+}
+```
+
+See [Providers](./providers.mdx) for complete details.
+
+## Channel Trait
+
+The `Channel` trait defines the interface for messaging platforms:
+
+```rust
+#[async_trait]
+pub trait Channel: Send + Sync {
+    /// Human-readable channel name
+    fn name(&self) -> &str;
+
+    /// Send a message through this channel
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()>;
+
+    /// Start listening for incoming messages (long-running)
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()>;
+
+    /// Check if channel is healthy
+    async fn health_check(&self) -> bool {
+        true
+    }
+
+    /// Signal typing indicator
+    async fn start_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Stop typing indicator
+    async fn stop_typing(&self, _recipient: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Whether this channel supports progressive message updates
+    fn supports_draft_updates(&self) -> bool {
+        false
+    }
+
+    /// Send interactive approval prompt (for supervised mode)
+    async fn send_approval_prompt(
+        &self,
+        recipient: &str,
+        request_id: &str,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        thread_ts: Option<String>,
+    ) -> anyhow::Result<()>;
+}
+```
+
+**Example - Telegram Channel:**
+
+```rust
+pub struct TelegramChannel {
+    bot_token: String,
+    allowed_users: HashSet<String>,
+    pairing_guard: Arc<PairingGuard>,
+}
+
+#[async_trait]
+impl Channel for TelegramChannel {
+    fn name(&self) -> &str {
+        "telegram"
+    }
+
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        // Split message if > 4096 chars (Telegram limit)
+        let chunks = split_message_for_telegram(&message.content);
+        
+        for chunk in chunks {
+            let payload = serde_json::json!({
+                "chat_id": message.recipient,
+                "text": chunk,
+                "parse_mode": "Markdown",
+            });
+            
+            // Send via Telegram Bot API...
+        }
+        
+        Ok(())
+    }
+
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
+        // Long-polling loop
+        loop {
+            let updates = self.get_updates().await?;
+            for update in updates {
+                // Validate user is paired/allowed
+                if !self.pairing_guard.is_paired(&update.user_id) {
+                    continue;
+                }
+                
+                let msg = ChannelMessage {
+                    id: update.message_id,
+                    sender: update.user_id,
+                    content: update.text,
+                    // ...
+                };
+                
+                tx.send(msg).await?;
+            }
+        }
+    }
+}
+```
+
+See [Channels](./channels.mdx) for complete details.
+
+## Tool Trait
+
+The `Tool` trait defines agent capabilities:
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    /// Tool name (used in LLM function calling)
+    fn name(&self) -> &str;
+
+    /// Human-readable description
+    fn description(&self) -> &str;
+
+    /// JSON schema for parameters
+    fn parameters_schema(&self) -> serde_json::Value;
+
+    /// Execute the tool with given arguments
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
+
+    /// Get the full spec for LLM registration
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters_schema(),
+        }
+    }
+}
+```
+
+**Example - Shell Tool:**
+
+```rust
+pub struct ShellTool {
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+    syscall_detector: Option<Arc<SyscallAnomalyDetector>>,
+}
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn name(&self) -> &str {
+        "shell"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a shell command in the workspace directory"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute"
+                },
+                "approved": {
+                    "type": "boolean",
+                    "description": "Explicit approval for high-risk commands",
+                    "default": false
+                }
+            },
+            "required": ["command"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let command = args.get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'command' parameter"))?;
+            
+        let approved = args.get("approved")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        
+        // Validate command against security policy
+        let risk = self.security.validate_command_execution(command, approved)
+            .map_err(|e| anyhow::anyhow!("Security policy violation: {}", e))?;
+        
+        // Execute via runtime adapter
+        let output = self.runtime.execute_shell(command).await?;
+        
+        Ok(ToolResult {
+            success: output.status.success(),
+            output: String::from_utf8_lossy(&output.stdout).to_string(),
+            error: if output.status.success() {
+                None
+            } else {
+                Some(String::from_utf8_lossy(&output.stderr).to_string())
+            },
+        })
+    }
+}
+```
+
+See [Tools](./tools.mdx) for complete details.
+
+## Memory Trait
+
+The `Memory` trait defines persistence backends:
+
+```rust
+#[async_trait]
+pub trait Memory: Send + Sync {
+    /// Backend name
+    fn name(&self) -> &str;
+
+    /// Store a memory entry, optionally scoped to a session
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()>;
+
+    /// Recall memories matching a query (keyword search)
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+
+    /// Get a specific memory by key
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+
+    /// List all memory keys, optionally filtered
+    async fn list(
+        &self,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>>;
+
+    /// Remove a memory by key
+    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+
+    /// Count total memories
+    async fn count(&self) -> anyhow::Result<usize>;
+
+    /// Health check
+    async fn health_check(&self) -> bool;
+}
+```
+
+**Example - Markdown Memory:**
+
+```rust
+pub struct MarkdownMemory {
+    workspace_dir: PathBuf,
+}
+
+#[async_trait]
+impl Memory for MarkdownMemory {
+    fn name(&self) -> &str {
+        "markdown"
+    }
+
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let entry = format!("- **{key}**: {content}");
+        
+        let path = match category {
+            MemoryCategory::Core => self.core_path(),
+            MemoryCategory::Daily => self.daily_path(),
+            _ => return Err(anyhow::anyhow!("Unsupported category")),
+        };
+        
+        self.append_to_file(&path, &entry).await
+    }
+
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        _session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let all = self.read_all_entries().await?;
+        let query_lower = query.to_lowercase();
+        
+        let mut matches: Vec<_> = all.into_iter()
+            .filter(|entry| entry.content.to_lowercase().contains(&query_lower))
+            .collect();
+            
+        matches.truncate(limit);
+        Ok(matches)
+    }
+}
+```
+
+See [Memory](./memory.mdx) for complete details.
+
+## Factory Pattern
+
+Traits are instantiated via factory functions that map string keys to implementations:
+
+### Provider Factory
+
+```rust
+// src/providers/mod.rs
+pub fn create_provider(name: &str, config: &Config) -> Result<Box<dyn Provider>> {
+    match name {
+        "openai" => Ok(Box::new(OpenAiProvider::new(config)?)),
+        "anthropic" => Ok(Box::new(AnthropicProvider::new(config)?)),
+        "ollama" => Ok(Box::new(OllamaProvider::new(config)?)),
+        "gemini" => Ok(Box::new(GeminiProvider::new(config)?)),
+        _ => Err(anyhow::anyhow!("Unknown provider: {}", name)),
+    }
+}
+```
+
+### Channel Factory
+
+```rust
+// src/channels/mod.rs
+pub fn start_channels(config: &Config) -> Result<Vec<Box<dyn Channel>>> {
+    let mut channels = Vec::new();
+    
+    if let Some(telegram_config) = &config.telegram {
+        channels.push(Box::new(TelegramChannel::new(telegram_config)?));
+    }
+    
+    if let Some(discord_config) = &config.discord {
+        channels.push(Box::new(DiscordChannel::new(discord_config)?));
+    }
+    
+    // ... other channels
+    
+    Ok(channels)
+}
+```
+
+### Tool Factory
+
+```rust
+// src/tools/mod.rs
+pub fn default_tools(
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+) -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(ShellTool::new(security.clone(), runtime.clone())),
+        Box::new(FileReadTool::new(security.clone())),
+        Box::new(FileWriteTool::new(security.clone())),
+    ]
+}
+
+pub fn all_tools(
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+    memory: Arc<dyn Memory>,
+) -> Vec<Box<dyn Tool>> {
+    let mut tools = default_tools(security.clone(), runtime.clone());
+    
+    tools.extend(vec![
+        Box::new(MemoryStoreTool::new(memory.clone())),
+        Box::new(MemoryRecallTool::new(memory.clone())),
+        Box::new(BrowserTool::new(security.clone())),
+        Box::new(HttpRequestTool::new(security.clone())),
+    ]);
+    
+    tools
+}
+```
+
+## Adding New Implementations
+
+To add a new component:
+
+1. **Implement the trait** in a new submodule
+2. **Register in factory** function with a stable key
+3. **Add tests** for factory wiring and core behavior
+4. **Update docs** reference (e.g., `providers-reference.md`)
+
+Example workflow from `AGENTS.md` §7.1:
+
+```bash
+# 1. Create new provider file
+src/providers/new_provider.rs
+
+# 2. Implement Provider trait
+impl Provider for NewProvider { ... }
+
+# 3. Register in factory
+// src/providers/mod.rs
+"new_provider" => Ok(Box::new(NewProvider::new(config)?)),
+
+# 4. Add tests
+#[test]
+fn factory_creates_new_provider() { ... }
+```
+
+## Best Practices
+
+### Trait Implementation
+
+- **Keep default methods simple**: Use conservative defaults
+- **Document behavior**: Trait docs should explain contracts
+- **Handle errors explicitly**: Return `anyhow::Result` with context
+- **Avoid blocking**: Use `async` for I/O operations
+
+### Factory Registration
+
+- **Use stable keys**: Factory keys are user-facing ("openai", "telegram")
+- **Handle aliases internally**: Don't expose implementation details
+- **Validate early**: Check config before constructing
+- **Fail fast**: Return errors during factory construction
+
+### Dependency Injection
+
+- **Pass Arc&lt;T&gt; for shared state**: `Arc<SecurityPolicy>`, `Arc<dyn Memory>`
+- **Clone Arc, not data**: `Arc::clone(&security)` is cheap
+- **Use trait objects**: `Arc<dyn Trait>` for polymorphism
+
+## Next Steps
+
+- [Providers](./providers.mdx) - Provider system deep dive
+- [Channels](./channels.mdx) - Channel system architecture
+- [Tools](./tools.mdx) - Tool system and security
+- [Memory](./memory.mdx) - Memory backends and persistence

@@ -1,0 +1,404 @@
+---
+title: Channel Trait
+description: Core trait for implementing messaging channels in ZeroClaw
+---
+
+The `Channel` trait defines the interface for all messaging platforms in ZeroClaw. Implement this trait to integrate new communication channels like Slack, Discord, Telegram, or custom protocols.
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait Channel: Send + Sync {
+    // Core methods
+    fn name(&self) -> &str;
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()>;
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()>;
+    
+    // Optional capabilities
+    async fn health_check(&self) -> bool;
+    async fn start_typing(&self, recipient: &str) -> anyhow::Result<()>;
+    async fn stop_typing(&self, recipient: &str) -> anyhow::Result<()>;
+    
+    // Draft message support
+    fn supports_draft_updates(&self) -> bool;
+    async fn send_draft(&self, message: &SendMessage) -> anyhow::Result<Option<String>>;
+    async fn update_draft(&self, recipient: &str, message_id: &str, text: &str) -> anyhow::Result<Option<String>>;
+    async fn finalize_draft(&self, recipient: &str, message_id: &str, text: &str) -> anyhow::Result<()>;
+    async fn cancel_draft(&self, recipient: &str, message_id: &str) -> anyhow::Result<()>;
+    
+    // Interactive features
+    async fn send_approval_prompt(&self, recipient: &str, request_id: &str, tool_name: &str, arguments: &serde_json::Value, thread_ts: Option<String>) -> anyhow::Result<()>;
+    async fn add_reaction(&self, channel_id: &str, message_id: &str, emoji: &str) -> anyhow::Result<()>;
+    async fn remove_reaction(&self, channel_id: &str, message_id: &str, emoji: &str) -> anyhow::Result<()>;
+}
+```
+
+## Required Methods
+
+### `name`
+
+Return the human-readable channel name.
+
+<ResponseField name="name" type="&str">
+  Stable lowercase identifier (e.g., "cli", "discord", "slack")
+</ResponseField>
+
+### `send`
+
+Send a message through this channel.
+
+<ParamField path="message" type="&SendMessage" required>
+  ```rust
+  pub struct SendMessage {
+      pub content: String,
+      pub recipient: String,
+      pub subject: Option<String>,
+      pub thread_ts: Option<String>,  // Thread identifier for threaded replies
+  }
+  ```
+</ParamField>
+
+<ResponseField name="Result" type="anyhow::Result<()>">
+  Success or error
+</ResponseField>
+
+### `listen`
+
+Start listening for incoming messages. This is a long-running async task.
+
+<ParamField path="tx" type="tokio::sync::mpsc::Sender<ChannelMessage>" required>
+  Channel sender to forward received messages to the agent
+</ParamField>
+
+<ResponseField name="Result" type="anyhow::Result<()>">
+  Returns when listener stops or encounters error
+</ResponseField>
+
+**Received messages** are sent as:
+```rust
+pub struct ChannelMessage {
+    pub id: String,
+    pub sender: String,
+    pub reply_target: String,
+    pub content: String,
+    pub channel: String,
+    pub timestamp: u64,
+    pub thread_ts: Option<String>,  // Thread identifier for replies
+}
+```
+
+## Optional Methods with Defaults
+
+### `health_check`
+
+Check if the channel is healthy and reachable.
+
+<ResponseField name="healthy" type="bool">
+  Returns `true` if channel is operational
+</ResponseField>
+
+**Default:** Returns `true`.
+
+### `start_typing`
+
+Signal that the bot is processing a response (typing indicator).
+
+<ParamField path="recipient" type="&str" required>
+  User or channel to show typing indicator to
+</ParamField>
+
+**Default:** No-op.
+
+**Note:** Implementations should repeat the indicator as needed for their platform (e.g., Slack requires renewal every 3 seconds).
+
+### `stop_typing`
+
+Stop any active typing indicator.
+
+<ParamField path="recipient" type="&str" required>
+  User or channel to stop typing indicator for
+</ParamField>
+
+**Default:** No-op.
+
+### `supports_draft_updates`
+
+Whether this channel supports progressive message updates via draft edits.
+
+<ResponseField name="supports" type="bool">
+  Returns `true` if draft updates are supported
+</ResponseField>
+
+**Default:** Returns `false`.
+
+### `send_draft`
+
+Send an initial draft message for progressive updates.
+
+<ParamField path="message" type="&SendMessage" required>
+  Initial draft message content
+</ParamField>
+
+<ResponseField name="message_id" type="anyhow::Result<Option<String>>">
+  Platform-specific message ID for later edits, or `None` if not supported
+</ResponseField>
+
+**Default:** Returns `Ok(None)`.
+
+### `update_draft`
+
+Update a previously sent draft message with new accumulated content.
+
+<ParamField path="recipient" type="&str" required>
+  Message recipient
+</ParamField>
+
+<ParamField path="message_id" type="&str" required>
+  Platform message ID from `send_draft`
+</ParamField>
+
+<ParamField path="text" type="&str" required>
+  Updated message content
+</ParamField>
+
+<ResponseField name="new_id" type="anyhow::Result<Option<String>>">
+  - `Ok(None)` to keep current draft message ID
+  - `Ok(Some(new_id))` when a continuation message was created (e.g., after hitting edit-count cap)
+</ResponseField>
+
+**Default:** Returns `Ok(None)`.
+
+### `finalize_draft`
+
+Finalize a draft with the complete response (apply formatting).
+
+<ParamField path="recipient" type="&str" required>
+  Message recipient
+</ParamField>
+
+<ParamField path="message_id" type="&str" required>
+  Platform message ID
+</ParamField>
+
+<ParamField path="text" type="&str" required>
+  Final message content
+</ParamField>
+
+**Default:** No-op.
+
+### `cancel_draft`
+
+Cancel and remove a previously sent draft message.
+
+<ParamField path="recipient" type="&str" required>
+  Message recipient
+</ParamField>
+
+<ParamField path="message_id" type="&str" required>
+  Platform message ID to cancel
+</ParamField>
+
+**Default:** No-op.
+
+### `send_approval_prompt`
+
+Send an interactive approval prompt for tool execution.
+
+<ParamField path="recipient" type="&str" required>
+  User to prompt
+</ParamField>
+
+<ParamField path="request_id" type="&str" required>
+  Unique request identifier
+</ParamField>
+
+<ParamField path="tool_name" type="&str" required>
+  Name of tool requiring approval
+</ParamField>
+
+<ParamField path="arguments" type="&serde_json::Value" required>
+  Tool arguments to display
+</ParamField>
+
+<ParamField path="thread_ts" type="Option<String>">
+  Thread identifier for threaded replies
+</ParamField>
+
+**Default:** Sends plain-text prompt with `/approve-allow` and `/approve-deny` commands.
+
+### `add_reaction`
+
+Add a reaction (emoji) to a message.
+
+<ParamField path="channel_id" type="&str" required>
+  Platform channel/conversation identifier
+</ParamField>
+
+<ParamField path="message_id" type="&str" required>
+  Platform-scoped message identifier
+</ParamField>
+
+<ParamField path="emoji" type="&str" required>
+  Unicode emoji (e.g., "👀", "✅")
+</ParamField>
+
+**Default:** No-op.
+
+### `remove_reaction`
+
+Remove a reaction previously added by this bot.
+
+<ParamField path="channel_id" type="&str" required>
+  Platform channel identifier
+</ParamField>
+
+<ParamField path="message_id" type="&str" required>
+  Platform message identifier
+</ParamField>
+
+<ParamField path="emoji" type="&str" required>
+  Unicode emoji to remove
+</ParamField>
+
+**Default:** No-op.
+
+## Helper Types
+
+### `SendMessage`
+
+```rust
+pub struct SendMessage {
+    pub content: String,
+    pub recipient: String,
+    pub subject: Option<String>,
+    pub thread_ts: Option<String>,
+}
+
+impl SendMessage {
+    pub fn new(content: impl Into<String>, recipient: impl Into<String>) -> Self;
+    pub fn with_subject(content: impl Into<String>, recipient: impl Into<String>, subject: impl Into<String>) -> Self;
+    pub fn in_thread(self, thread_ts: Option<String>) -> Self;
+}
+```
+
+### `ChannelMessage`
+
+```rust
+pub struct ChannelMessage {
+    pub id: String,
+    pub sender: String,
+    pub reply_target: String,
+    pub content: String,
+    pub channel: String,
+    pub timestamp: u64,
+    pub thread_ts: Option<String>,
+}
+```
+
+## Implementation Example
+
+Here's a complete CLI channel implementation:
+
+```rust
+use async_trait::async_trait;
+use zeroclaw::channels::traits::{Channel, ChannelMessage, SendMessage};
+use tokio::io::{self, AsyncBufReadExt, BufReader};
+use uuid::Uuid;
+
+pub struct CliChannel;
+
+impl CliChannel {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Channel for CliChannel {
+    fn name(&self) -> &str {
+        "cli"
+    }
+
+    async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
+        println!("{}", message.content);
+        Ok(())
+    }
+
+    async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
+        let stdin = io::stdin();
+        let reader = BufReader::new(stdin);
+        let mut lines = reader.lines();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line = line.trim().to_string();
+            if line.is_empty() {
+                continue;
+            }
+            if line == "/quit" || line == "/exit" {
+                break;
+            }
+
+            let msg = ChannelMessage {
+                id: Uuid::new_v4().to_string(),
+                sender: "user".to_string(),
+                reply_target: "user".to_string(),
+                content: line,
+                channel: "cli".to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                thread_ts: None,
+            };
+
+            if tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+## Factory Registration
+
+Register your channel in the factory:
+
+```rust
+// src/channels/mod.rs
+pub fn create_channel(name: &str, config: &ChannelConfig) -> Arc<dyn Channel> {
+    match name {
+        "cli" => Arc::new(CliChannel::new()),
+        "discord" => Arc::new(DiscordChannel::new(config)),
+        "slack" => Arc::new(SlackChannel::new(config)),
+        _ => panic!("Unknown channel: {}", name),
+    }
+}
+```
+
+## Best Practices
+
+<Note>
+**Thread Safety:** The `listen` method runs in a long-lived async task. Ensure your implementation handles reconnection and graceful shutdown.
+</Note>
+
+<Tip>
+**Message Formatting:** Different platforms have different markdown/formatting support. Consider normalizing input and formatting output appropriately.
+</Tip>
+
+<Warning>
+**Rate Limiting:** Implement appropriate rate limiting for your platform. Many messaging APIs have strict rate limits and require backoff strategies.
+</Warning>
+
+<Tip>
+**Draft Updates:** For platforms with edit limits (e.g., Slack allows 5 edits), implement continuation messages in `update_draft` when limits are reached.
+</Tip>
+
+## Related
+
+- [Provider Trait](/api/provider-trait) - Implement LLM providers
+- [Tool Trait](/api/tool-trait) - Implement tools
+- [Configuration Reference](/reference/config) - Configure channels in config.toml

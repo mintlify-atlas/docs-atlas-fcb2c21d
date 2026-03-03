@@ -1,0 +1,261 @@
+---
+title: Hardware Support
+description: Control microcontrollers and peripherals with AI agents
+---
+
+# Hardware Support
+
+ZeroClaw extends beyond software—your AI agents can directly control physical hardware. The hardware subsystem enables microcontrollers (MCUs) and single-board computers (SBCs) to interpret natural language commands, generate hardware-specific code, and execute peripheral interactions in real-time.
+
+## Vision
+
+ZeroClaw acts as a **hardware-aware AI agent** that:
+- Receives natural language commands via channels (WhatsApp, Telegram)
+- Fetches hardware documentation (datasheets, register maps) using RAG
+- Synthesizes Rust code using an LLM (Gemini, Claude, local models)
+- Executes logic to control peripherals (GPIO, I2C, SPI, sensors)
+- Persists optimized code for future reuse
+
+**Mental model:** ZeroClaw = brain. Peripherals = arms and legs.
+
+## Supported Hardware
+
+ZeroClaw supports multiple platforms with different capabilities:
+
+| Platform | Transport | Use Case | Status |
+|----------|-----------|----------|--------|
+| **Raspberry Pi** | Native GPIO | Production robots, edge AI | ✅ Stable |
+| **STM32 Nucleo** | USB Serial | Development, prototyping | ✅ Stable |
+| **Arduino Uno** | USB Serial | Education, simple projects | ✅ Stable |
+| **ESP32** | Serial / WiFi | IoT devices, remote control | ✅ Serial stable |
+
+## Two Modes of Operation
+
+### Edge-Native (Standalone)
+
+**Target:** Wi-Fi-enabled boards (ESP32, Raspberry Pi)
+
+ZeroClaw runs **directly on the device**. The board communicates with peripherals locally.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  ZeroClaw on ESP32 / Raspberry Pi                   │
+│                                                     │
+│  ┌─────────────┐    ┌──────────────┐              │
+│  │ Channels    │───►│ Agent Loop   │              │
+│  │ WhatsApp    │    │ (LLM calls)  │              │
+│  │ Telegram    │    └──────┬───────┘              │
+│  └─────────────┘           │                       │
+│                            ▼                       │
+│  ┌────────────────────────────────────────────┐   │
+│  │ Code synthesis → GPIO / I2C / SPI         │   │
+│  └────────────────────────────────────────────┘   │
+│                                                     │
+│  Peripherals (GPIO, I2C, SPI, sensors, actuators)  │
+└─────────────────────────────────────────────────────┘
+```
+
+**Example workflow:**
+1. User: *"Turn on LED on pin 13"*
+2. ZeroClaw fetches board-specific docs (ESP32 GPIO mapping)
+3. LLM synthesizes code
+4. GPIO is toggled; result returned to user
+5. Code is cached for next time
+
+**All happens on-device.** No host required.
+
+### Host-Mediated (Development)
+
+**Target:** Hardware connected via USB to a host computer
+
+ZeroClaw runs on the **host** and communicates with the target device. Used for development, debugging, and flashing.
+
+```
+┌─────────────────────┐                    ┌──────────────────┐
+│  ZeroClaw on Host   │   USB / J-Link     │  STM32 Nucleo     │
+│                     │ ◄────────────────► │  (or Arduino)     │
+│  - Channels         │                    │  - Memory map     │
+│  - LLM              │                    │  - GPIO, ADC, I2C │
+│  - Hardware probe   │   VID/PID          │  - Flash / RAM    │
+│  - Flash / debug    │   discovery        │                   │
+└─────────────────────┘                    └──────────────────┘
+```
+
+**Example workflow:**
+1. User: *"What GPIO pins are available on this USB device?"*
+2. ZeroClaw identifies hardware (VID/PID, architecture)
+3. Returns memory map and pin layout
+
+## Architecture: Peripheral as Extension Point
+
+Hardware support is built on the `Peripheral` trait:
+
+```rust
+#[async_trait]
+pub trait Peripheral: Send + Sync {
+    fn name(&self) -> &str;
+    fn board_type(&self) -> &str;  // "nucleo-f401re", "rpi-gpio"
+    async fn connect(&mut self) -> anyhow::Result<()>;
+    async fn disconnect(&mut self) -> anyhow::Result<()>;
+    async fn health_check(&self) -> bool;
+    /// Tools this peripheral provides
+    fn tools(&self) -> Vec<Box<dyn Tool>>;
+}
+```
+
+### Flow
+
+1. **Startup:** ZeroClaw loads config, creates peripherals
+2. **Connect:** Calls `connect()` on each peripheral
+3. **Tools:** Collects tools (gpio_write, sensor_read, etc.)
+4. **Agent loop:** Agent can call hardware tools like any other tool
+5. **Shutdown:** Calls `disconnect()` to clean up
+
+## Communication Protocols
+
+### Serial Protocol (JSON-over-UART)
+
+Simple JSON for Arduino, STM32, ESP32:
+
+**Request (host → peripheral):**
+```json
+{"id":"1","cmd":"gpio_write","args":{"pin":13,"value":1}}
+```
+
+**Response (peripheral → host):**
+```json
+{"id":"1","ok":true,"result":"done"}
+```
+
+Commands: `ping`, `gpio_read`, `gpio_write`, `capabilities`
+
+### Native GPIO (Raspberry Pi)
+
+Direct access via `rppal` library—no firmware needed.
+
+## Quick Start
+
+### Connect Arduino
+
+```bash
+# Flash firmware
+zeroclaw peripheral flash --port /dev/ttyUSB0
+
+# Add to config
+zeroclaw peripheral add arduino-uno /dev/ttyUSB0
+
+# Test
+zeroclaw agent -m "Turn on the LED on pin 13"
+```
+
+### Connect Raspberry Pi GPIO
+
+```bash
+# Enable peripheral-rpi feature
+cargo build --features peripheral-rpi
+
+# Add to config
+zeroclaw peripheral add rpi-gpio native
+
+# Test
+zeroclaw agent -m "Read GPIO pin 17"
+```
+
+### Connect STM32 Nucleo
+
+```bash
+# Flash firmware
+zeroclaw peripheral flash-nucleo
+
+# Add to config
+zeroclaw peripheral add nucleo-f401re /dev/ttyACM0
+```
+
+## Configuration
+
+Add to `~/.zeroclaw/config.toml`:
+
+```toml
+[peripherals]
+enabled = true
+datasheet_dir = "docs/datasheets"  # For RAG-based code generation
+
+# Arduino via serial
+[[peripherals.boards]]
+board = "arduino-uno"
+transport = "serial"
+path = "/dev/ttyUSB0"
+baud = 115200
+
+# Raspberry Pi GPIO
+[[peripherals.boards]]
+board = "rpi-gpio"
+transport = "native"
+
+# STM32 Nucleo
+[[peripherals.boards]]
+board = "nucleo-f401re"
+transport = "serial"
+path = "/dev/ttyACM0"
+baud = 115200
+
+# ESP32
+[[peripherals.boards]]
+board = "esp32"
+transport = "serial"
+path = "/dev/ttyUSB1"
+baud = 115200
+```
+
+## Tools Provided
+
+Each connected peripheral exposes tools to the agent:
+
+| Tool | Description | Boards |
+|------|-------------|--------|
+| `gpio_read` | Read digital pin value (0 or 1) | All |
+| `gpio_write` | Set digital pin high or low | All |
+| `hardware_capabilities` | Query available GPIO pins and features | Serial boards |
+| `hardware_memory_map` | Get memory layout and peripheral addresses | STM32, ESP32 |
+| `hardware_board_info` | Get board type, architecture, VID/PID | All |
+
+## RAG Pipeline (Datasheet Retrieval)
+
+ZeroClaw can fetch board-specific documentation to improve code generation:
+
+- **Index:** Datasheets, register maps (in `docs/datasheets/`)
+- **Retrieve:** On query, fetch relevant snippets
+- **Inject:** Add to LLM context
+- **Result:** Accurate, board-specific code
+
+Place datasheets in `docs/datasheets/nucleo-f401re.md`, `esp32.md`, etc.
+
+## Security Considerations
+
+- **Serial path validation:** Only allow `/dev/tty*` paths
+- **GPIO pin restrictions:** Avoid power/reset pins
+- **No secrets on peripheral:** Firmware never stores API keys
+- **Sandboxing:** LLM-generated code runs in controlled environment
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Supported Boards" icon="microchip" href="/hardware/supported-boards">
+    Full list of supported hardware platforms
+  </Card>
+  <Card title="Raspberry Pi" icon="raspberry-pi" href="/hardware/peripherals/raspberry-pi">
+    Set up Raspberry Pi GPIO
+  </Card>
+  <Card title="Arduino" icon="arduino" href="/hardware/peripherals/arduino">
+    Flash and configure Arduino
+  </Card>
+  <Card title="Robot Kit" icon="robot" href="/hardware/robot-kit/overview">
+    Build autonomous robots
+  </Card>
+</CardGroup>
+
+## Related Documents
+
+- [Hardware Peripherals Design](/architecture/hardware-peripherals-design) — Full architecture
+- [Adding Boards and Tools](/contributing/adding-boards-and-tools) — Extend hardware support
+- [Robot Kit](/hardware/robot-kit/overview) — Build AI-powered robots

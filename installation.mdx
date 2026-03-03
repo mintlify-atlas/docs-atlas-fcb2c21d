@@ -1,0 +1,697 @@
+---
+title: Installation Guide
+description: Detailed installation instructions for all platforms and hardware configurations
+---
+
+# Installation Guide
+
+Comprehensive installation instructions for ZeroClaw across all supported platforms.
+
+## System Requirements
+
+### Minimum Runtime Requirements
+
+<CardGroup cols={2}>
+  <Card title="RAM" icon="memory">
+    **< 5MB** for basic agent operations
+    
+    (Build-time: ~2GB recommended)
+  </Card>
+  <Card title="Disk Space" icon="hard-drive">
+    **~9MB** for binary + dependencies
+    
+    (Build-time: ~6GB free space)
+  </Card>
+  <Card title="CPU" icon="microchip">
+    Any ARM, x86_64, or RISC-V processor
+    
+    Tested down to 0.8GHz single-core
+  </Card>
+  <Card title="OS" icon="desktop">
+    Linux, macOS, Windows, or bare-metal
+    
+    (Firmware available for microcontrollers)
+  </Card>
+</CardGroup>
+
+### Supported Platforms
+
+| Platform | Architecture | Status | Notes |
+|----------|-------------|--------|-------|
+| **Linux** | x86_64, aarch64, armv7 | ✅ Tier 1 | Debian, Ubuntu, Fedora, Arch, Alpine |
+| **macOS** | x86_64, aarch64 (Apple Silicon) | ✅ Tier 1 | macOS 10.15+ |
+| **Windows** | x86_64 | ✅ Tier 1 | Native and WSL2 |
+| **Raspberry Pi** | armv7, aarch64 | ✅ Tier 1 | Pi 3, 4, 5, Zero 2 W (GPIO support) |
+| **Docker** | Multi-arch | ✅ Tier 1 | x86_64, aarch64 images |
+| **ESP32** | xtensa | ⚙️ Firmware | zeroclaw-esp32, zeroclaw-esp32-ui |
+| **STM32** | ARM Cortex-M | ⚙️ Firmware | Nucleo boards (zeroclaw-nucleo) |
+| **Arduino** | AVR, ARM | ⚙️ Firmware | zeroclaw-arduino, zeroclaw-uno-q-bridge |
+| **Android/Termux** | aarch64, armv7 | ✅ Experimental | Source builds only |
+
+<Info>
+  **Tier 1**: Pre-built binaries available, CI-tested, officially supported
+  
+  **Firmware**: Embedded builds for microcontrollers (limited feature set)
+  
+  **Experimental**: Community-supported, may require manual configuration
+</Info>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="Homebrew (Recommended)">
+    ### macOS and Linux (Homebrew/Linuxbrew)
+    
+    Fastest method with pre-built binaries:
+    
+    ```bash
+    brew install zeroclaw
+    ```
+    
+    Verify installation:
+    
+    ```bash
+    zeroclaw --version
+    ```
+    
+    <Tip>
+      Homebrew handles PATH configuration automatically. No additional setup needed.
+    </Tip>
+    
+    ### Update to Latest
+    
+    ```bash
+    brew upgrade zeroclaw
+    ```
+  </Tab>
+  
+  <Tab title="Clone + Bootstrap">
+    ### From Source (All Platforms)
+    
+    Clone the repository and run the bootstrap script:
+    
+    ```bash
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh
+    ```
+    
+    <Accordion title="What bootstrap.sh does">
+      1. Validates system requirements (RAM, disk space)
+      2. Optionally installs Rust toolchain via rustup
+      3. Builds ZeroClaw with optimized release profile:
+         ```bash
+         cargo build --release --locked
+         ```
+      4. Installs binary to `~/.cargo/bin/`:
+         ```bash
+         cargo install --path . --force --locked
+         ```
+    </Accordion>
+    
+    ### Bootstrap Options
+    
+    <CodeGroup>
+      ```bash Full Environment Setup
+      # Install system dependencies + Rust + ZeroClaw
+      ./bootstrap.sh --install-system-deps --install-rust
+      ```
+      
+      ```bash Pre-built Binary (Low Resources)
+      # Download release binary instead of compiling
+      ./bootstrap.sh --prefer-prebuilt
+      ```
+      
+      ```bash Docker Container
+      # Build and run in isolated container
+      ./bootstrap.sh --docker
+      ```
+      
+      ```bash With Onboarding
+      # Install + run setup wizard
+      ./bootstrap.sh --onboard --api-key "$API_KEY"
+      ```
+    </CodeGroup>
+    
+    ### Advanced Options
+    
+    ```bash
+    # Force source build (skip pre-built check)
+    ./bootstrap.sh --force-source-build
+    
+    # Binary-only (fail if no release asset)
+    ./bootstrap.sh --prebuilt-only
+    
+    # Custom Cargo features
+    ./bootstrap.sh --cargo-features "hardware,channel-matrix,browser-native"
+    
+    # Skip build step (dev mode)
+    ./bootstrap.sh --skip-build
+    ```
+    
+    <Warning>
+      Source builds require **~2GB RAM** and **~6GB disk**. Use `--prefer-prebuilt` on constrained systems.
+    </Warning>
+  </Tab>
+  
+  <Tab title="Cargo Install">
+    ### Via Cargo (Rust Package Manager)
+    
+    If you already have Rust installed:
+    
+    ```bash
+    cargo install zeroclaw
+    ```
+    
+    This compiles from the latest crates.io release.
+    
+    ### Install Specific Version
+    
+    ```bash
+    cargo install zeroclaw --version 0.1.8
+    ```
+    
+    ### Install with Features
+    
+    ```bash
+    cargo install zeroclaw --features "hardware,channel-matrix,peripheral-rpi"
+    ```
+    
+    <Info>
+      **Available Features**:
+      - `hardware` — USB device enumeration, serial support
+      - `channel-matrix` — Matrix E2EE chat support
+      - `channel-lark` — Lark/Feishu/DingTalk channels
+      - `memory-postgres` — PostgreSQL memory backend
+      - `peripheral-rpi` — Raspberry Pi GPIO support
+      - `browser-native` — Selenium/CDP browser automation
+      - `runtime-wasm` — WASM tool sandboxing
+      - `wasm-tools` — WASM plugin loader
+      - `whatsapp-web` — WhatsApp Web client
+      - `probe` — STM32/Nucleo memory probing (probe-rs)
+      - `rag-pdf` — PDF ingestion for RAG
+    </Info>
+  </Tab>
+  
+  <Tab title="Remote One-Liner">
+    ### Direct Install (No Git Clone)
+    
+    For quick deployment on remote servers:
+    
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/main/scripts/bootstrap.sh | bash
+    ```
+    
+    This automatically:
+    1. Detects if running in a git repo
+    2. Clones temp workspace if needed
+    3. Builds and installs ZeroClaw
+    4. Cleans up temp files
+    
+    <Warning>
+      Review scripts before piping to bash in production environments:
+      
+      ```bash
+      curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/main/scripts/bootstrap.sh > bootstrap.sh
+      less bootstrap.sh  # Review
+      bash bootstrap.sh
+      ```
+    </Warning>
+    
+    ### Legacy Install Script
+    
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/main/scripts/install.sh | bash
+    ```
+    
+    <Note>
+      This legacy endpoint forwards to `bootstrap.sh` on newer releases.
+    </Note>
+  </Tab>
+  
+  <Tab title="Docker">
+    ### Containerized Deployment
+    
+    #### Quick Start
+    
+    ```bash
+    ./bootstrap.sh --docker
+    ```
+    
+    This builds a local image and launches onboarding in a container with persistent storage in `./.zeroclaw-docker/`.
+    
+    #### Manual Docker Build
+    
+    ```bash
+    # Build image
+    docker build -t zeroclaw:local .
+    
+    # Run onboarding
+    docker run -it --rm \
+      -v zeroclaw-data:/root/.zeroclaw \
+      zeroclaw:local onboard
+    
+    # Start gateway
+    docker run -d --name zeroclaw-gateway \
+      -p 3000:3000 \
+      -v zeroclaw-data:/root/.zeroclaw \
+      zeroclaw:local gateway
+    ```
+    
+    #### Docker Compose
+    
+    ```yaml docker-compose.yml
+    version: '3.8'
+    services:
+      zeroclaw:
+        build: .
+        container_name: zeroclaw-agent
+        ports:
+          - "3000:3000"
+        volumes:
+          - zeroclaw-config:/root/.zeroclaw
+          - zeroclaw-workspace:/workspace
+        environment:
+          - API_KEY=${API_KEY}
+          - PROVIDER=openrouter
+          - ZEROCLAW_GATEWAY_HOST=0.0.0.0
+        restart: unless-stopped
+    
+    volumes:
+      zeroclaw-config:
+      zeroclaw-workspace:
+    ```
+    
+    ```bash
+    # Start services
+    docker-compose up -d
+    
+    # View logs
+    docker-compose logs -f
+    
+    # Stop services
+    docker-compose down
+    ```
+    
+    #### Advanced Docker Options
+    
+    ```bash
+    # Reset existing containers/volumes
+    ./bootstrap.sh --docker --docker-reset
+    
+    # Seed config from host
+    ./bootstrap.sh --docker --docker-config ./config.toml --docker-secret-key ./.secret_key
+    
+    # Start persistent daemon
+    ./bootstrap.sh --docker --docker-daemon
+    
+    # Custom Cargo features in Docker build
+    ZEROCLAW_DOCKER_CARGO_FEATURES="hardware,browser-native" ./bootstrap.sh --docker
+    ```
+    
+    <Tip>
+      Use **Podman** instead of Docker by setting:
+      
+      ```bash
+      export ZEROCLAW_CONTAINER_CLI=podman
+      ./bootstrap.sh --docker
+      ```
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Platform-Specific Instructions
+
+### Linux
+
+<AccordionGroup>
+  <Accordion title="Debian/Ubuntu">
+    ```bash
+    # Install build dependencies
+    sudo apt-get update
+    sudo apt-get install -y build-essential pkg-config libssl-dev git curl
+    
+    # Install Rust
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    source $HOME/.cargo/env
+    
+    # Install ZeroClaw
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh
+    ```
+    
+    **Optional features:**
+    
+    ```bash
+    # Hardware support (USB, serial)
+    sudo apt-get install -y libudev-dev
+    
+    # Browser automation
+    sudo apt-get install -y chromium-browser chromium-chromedriver
+    ```
+  </Accordion>
+  
+  <Accordion title="Fedora/RHEL/CentOS">
+    ```bash
+    # Install build dependencies
+    sudo dnf groupinstall -y "Development Tools"
+    sudo dnf install -y pkg-config openssl-devel git curl
+    
+    # Install Rust
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    source $HOME/.cargo/env
+    
+    # Install ZeroClaw
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh
+    ```
+  </Accordion>
+  
+  <Accordion title="Arch Linux">
+    ```bash
+    # Install dependencies
+    sudo pacman -Syu base-devel openssl git curl
+    
+    # Install Rust
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    source $HOME/.cargo/env
+    
+    # Install ZeroClaw
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh
+    ```
+  </Accordion>
+  
+  <Accordion title="Alpine Linux">
+    ```bash
+    # Install dependencies
+    apk add --no-cache build-base openssl-dev git curl bash
+    
+    # Install Rust
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    source $HOME/.cargo/env
+    
+    # Install ZeroClaw
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh
+    ```
+    
+    <Note>
+      Alpine uses musl libc. Some features may require additional packages:
+      ```bash
+      apk add --no-cache pkgconfig libudev-zero-dev
+      ```
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+### macOS
+
+```bash
+# Install Homebrew (if not already installed)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install ZeroClaw
+brew install zeroclaw
+```
+
+**Or from source:**
+
+```bash
+# Install Xcode Command Line Tools
+xcode-select --install
+
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Clone and build
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+./bootstrap.sh
+```
+
+<Warning>
+  macOS may require granting permissions for terminal access to folders. Go to **System Preferences → Security & Privacy → Files and Folders** if you encounter permission errors.
+</Warning>
+
+### Windows
+
+<Tabs>
+  <Tab title="WSL2 (Recommended)">
+    Install Windows Subsystem for Linux 2:
+    
+    ```powershell
+    wsl --install -d Ubuntu
+    ```
+    
+    Then follow Linux (Ubuntu) instructions above.
+    
+    <Tip>
+      WSL2 provides the best compatibility and performance for Rust development on Windows.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Native Windows">
+    1. Install **Visual Studio Build Tools** (C++ workload)
+    2. Install Rust for Windows:
+       ```powershell
+       # Download and run rustup-init.exe
+       Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+       .\rustup-init.exe
+       ```
+    3. Clone and build:
+       ```powershell
+       git clone https://github.com/zeroclaw-labs/zeroclaw.git
+       cd zeroclaw
+       cargo build --release
+       cargo install --path . --force
+       ```
+    
+    <Note>
+      Native Windows builds have limited feature support (no GPIO, some channel limitations).
+    </Note>
+  </Tab>
+</Tabs>
+
+### Raspberry Pi
+
+<Steps>
+  <Step title="Update System">
+    ```bash
+    sudo apt-get update
+    sudo apt-get upgrade -y
+    ```
+  </Step>
+  
+  <Step title="Install Rust">
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    source $HOME/.cargo/env
+    ```
+  </Step>
+  
+  <Step title="Install Build Dependencies">
+    ```bash
+    sudo apt-get install -y build-essential pkg-config libssl-dev git
+    ```
+  </Step>
+  
+  <Step title="Use Pre-built Binary (Recommended)">
+    Raspberry Pi 3/4 have limited RAM. Use pre-built binaries:
+    
+    ```bash
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh --prefer-prebuilt
+    ```
+    
+    If source build is required, enable swap:
+    ```bash
+    sudo dphys-swapfile swapoff
+    sudo nano /etc/dphys-swapfile  # Set CONF_SWAPSIZE=2048
+    sudo dphys-swapfile setup
+    sudo dphys-swapfile swapon
+    ```
+  </Step>
+  
+  <Step title="Enable GPIO Support">
+    Install with GPIO peripheral support:
+    
+    ```bash
+    cargo install zeroclaw --features peripheral-rpi
+    ```
+    
+    Or in source builds:
+    ```bash
+    ./bootstrap.sh --cargo-features "peripheral-rpi"
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  **Raspberry Pi GPIO** requires running as root or in the `gpio` group:
+  
+  ```bash
+  sudo usermod -a -G gpio $USER
+  # Log out and back in for group change to take effect
+  ```
+</Info>
+
+### Android (Termux)
+
+<Warning>
+  Android/Termux support is experimental. Some features (hardware, some channels) are unavailable.
+</Warning>
+
+```bash
+# Install Termux from F-Droid (not Google Play)
+# Inside Termux:
+
+pkg update && pkg upgrade
+pkg install rust git binutils
+
+# Clone and build
+git clone https://github.com/zeroclaw-labs/zeroclaw.git
+cd zeroclaw
+cargo build --release --locked
+cargo install --path . --force
+```
+
+<Note>
+  Termux builds use `target_os="android"` and exclude nusb (USB enumeration) to avoid compilation errors.
+</Note>
+
+## Embedded & Microcontroller Firmware
+
+### ESP32
+
+ZeroClaw firmware for ESP32 with optional UI:
+
+```bash
+cd firmware/zeroclaw-esp32
+
+# Install ESP-IDF toolchain
+. $HOME/esp/esp-idf/export.sh
+
+# Build and flash
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+See [firmware/zeroclaw-esp32/README.md](https://github.com/zeroclaw-labs/zeroclaw/tree/main/firmware/zeroclaw-esp32) for detailed setup.
+
+### STM32 Nucleo
+
+```bash
+cd firmware/zeroclaw-nucleo
+
+# Install ARM toolchain
+sudo apt-get install gcc-arm-none-eabi
+
+# Build
+cargo build --release --target thumbv7em-none-eabihf
+
+# Flash with probe-rs
+cargo run --release
+```
+
+See [docs/nucleo-setup.md](https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/nucleo-setup.md).
+
+### Arduino
+
+```bash
+cd firmware/zeroclaw-arduino
+
+# Open in Arduino IDE and flash
+# Or use arduino-cli:
+arduino-cli compile --fqbn arduino:avr:uno zeroclaw-arduino.ino
+arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:avr:uno
+```
+
+## Verification
+
+After installation, verify ZeroClaw is working:
+
+```bash
+# Check version
+zeroclaw --version
+
+# Run health check
+zeroclaw doctor
+
+# Test configuration
+zeroclaw config export
+```
+
+Expected output:
+```
+zeroclaw 0.1.8
+Zero overhead. Zero compromise. 100% Rust.
+```
+
+## Updating ZeroClaw
+
+<Tabs>
+  <Tab title="Homebrew">
+    ```bash
+    brew upgrade zeroclaw
+    ```
+  </Tab>
+  
+  <Tab title="Cargo">
+    ```bash
+    cargo install zeroclaw --force
+    ```
+  </Tab>
+  
+  <Tab title="Source">
+    ```bash
+    cd zeroclaw
+    git pull origin main
+    ./bootstrap.sh
+    ```
+  </Tab>
+  
+  <Tab title="Self-Update (Coming Soon)">
+    ```bash
+    zeroclaw update
+    ```
+    
+    <Note>
+      Self-update command is planned for v0.2.0.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Uninstallation
+
+```bash
+# Remove binary
+cargo uninstall zeroclaw
+
+# Or if installed via Homebrew
+brew uninstall zeroclaw
+
+# Remove config and data (optional)
+rm -rf ~/.zeroclaw
+```
+
+<Warning>
+  Removing `~/.zeroclaw` deletes all configuration, credentials, and conversation history. Back up important data first.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Run your first agent in under 5 minutes
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Configure providers, channels, and runtime options
+  </Card>
+</CardGroup>

@@ -1,0 +1,532 @@
+---
+title: AWS Bedrock Provider
+description: API reference for the AWS Bedrock provider
+---
+
+## Overview
+
+The AWS Bedrock provider enables ZeroClaw to use foundation models via AWS Bedrock's Converse API. It uses AWS Signature Version 4 (SigV4) authentication with support for EC2 instance metadata, ECS container credentials, and environment variables.
+
+**Provider ID:** `bedrock`
+
+**Alias:** `aws-bedrock`
+
+**Service:** `bedrock` (for SigV4 signing)
+
+**Endpoint:** `https://bedrock-runtime.{region}.amazonaws.com`
+
+**API:** [Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
+
+## Authentication
+
+### Environment Variables
+
+Credentials are resolved in the following order:
+
+1. **Environment variables:**
+   - `AWS_ACCESS_KEY_ID` (required)
+   - `AWS_SECRET_ACCESS_KEY` (required)
+   - `AWS_SESSION_TOKEN` (optional, for temporary credentials)
+   - `AWS_REGION` or `AWS_DEFAULT_REGION` (default: `us-east-1`)
+
+2. **ECS container credentials:**
+   - `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` (ECS/Fargate)
+   - `AWS_CONTAINER_CREDENTIALS_FULL_URI` (ECS Anywhere)
+   - `AWS_CONTAINER_AUTHORIZATION_TOKEN` (if required)
+
+3. **EC2 instance metadata (IMDSv2):**
+   - Fetches temporary credentials from instance IAM role
+   - Requires network access to `169.254.169.254`
+
+### Credential Caching
+
+Credentials are cached for **50 minutes** to reduce metadata service calls:
+
+```rust
+const CREDENTIAL_TTL_SECS: u64 = 50 * 60; // 50 minutes
+```
+
+The provider automatically refreshes credentials when they expire.
+
+## Configuration
+
+### Config File
+
+```toml
+default_provider = "bedrock"
+default_model = "anthropic.claude-sonnet-4-6"
+default_temperature = 0.7
+```
+
+Note: Bedrock does not use a single API key. Use AWS environment variables.
+
+### Environment Setup
+
+```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+zeroclaw agent --provider bedrock --model anthropic.claude-sonnet-4-6 -m "Hello!"
+```
+
+### Cross-Region Inference
+
+Use cross-region inference profiles:
+
+```bash
+zeroclaw agent --provider bedrock \
+  --model us.anthropic.claude-sonnet-4-6 \
+  -m "Hello!"
+```
+
+## Features
+
+### Native Tool Calling
+
+**Supported:** Yes
+
+Bedrock's Converse API uses a nested tool format:
+
+```json
+{
+  "toolConfig": {
+    "tools": [{
+      "toolSpec": {
+        "name": "get_weather",
+        "description": "Get weather for a location",
+        "inputSchema": {
+          "json": {
+            "type": "object",
+            "properties": {
+              "location": {"type": "string"}
+            },
+            "required": ["location"]
+          }
+        }
+      }
+    }]
+  }
+}
+```
+
+### Vision Support
+
+**Supported:** Yes
+
+Images are sent as base64-encoded bytes:
+
+```json
+{
+  "image": {
+    "format": "png",
+    "source": {
+      "bytes": "iVBORw0KGgo..."
+    }
+  }
+}
+```
+
+Image format is auto-detected from MIME type:
+- `image/png` → `png`
+- `image/gif` → `gif`
+- `image/webp` → `webp`
+- Others → `jpeg`
+
+### Prompt Caching
+
+**Supported:** Yes
+
+Bedrock uses `cachePoint` blocks for prompt caching:
+
+#### System Prompt Caching
+
+System prompts larger than 3KB are automatically cached:
+
+```json
+{
+  "system": [
+    {"text": "Large system prompt..."},
+    {"cachePoint": {"type": "default"}}
+  ]
+}
+```
+
+#### Conversation Caching
+
+Conversations with more than 4 non-system messages cache the last message:
+
+```json
+{
+  "messages": [
+    ...,
+    {
+      "role": "user",
+      "content": [
+        {"text": "Latest message..."},
+        {"cachePoint": {"type": "default"}}
+      ]
+    }
+  ]
+}
+```
+
+### Streaming Support
+
+**Supported:** Yes
+
+Use the `converse-stream` endpoint for real-time responses:
+
+```bash
+zeroclaw agent --provider bedrock \
+  --model anthropic.claude-sonnet-4-6 \
+  --stream \
+  -m "Write a story..."
+```
+
+Streaming uses AWS EventStream binary format.
+
+### Token Usage Tracking
+
+**Supported:** Yes
+
+Usage data is extracted from response:
+
+```json
+{
+  "usage": {
+    "inputTokens": 100,
+    "outputTokens": 50
+  }
+}
+```
+
+## API Endpoints
+
+### Converse
+
+**Endpoint:** `POST /model/{modelId}/converse`
+
+**Model ID Format:** `anthropic.claude-sonnet-4-6` or `us.anthropic.claude-*`
+
+**Request:**
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [{"text": "Hello!"}]
+    }
+  ],
+  "system": [{"text": "You are a helpful assistant."}],
+  "inferenceConfig": {
+    "maxTokens": 4096,
+    "temperature": 0.7
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [{"text": "Hello! How can I help?"}]
+    }
+  },
+  "stopReason": "end_turn",
+  "usage": {
+    "inputTokens": 12,
+    "outputTokens": 9
+  }
+}
+```
+
+### Converse Stream
+
+**Endpoint:** `POST /model/{modelId}/converse-stream`
+
+**Response:** AWS EventStream binary format with `contentBlockDelta` events.
+
+## Request Configuration
+
+### Max Tokens
+
+**Default:** 4096
+
+Configured via `inferenceConfig.maxTokens`.
+
+### Temperature
+
+**Range:** 0.0 - 1.0
+
+**Default:** 0.7 (from config)
+
+### Timeouts
+
+- **Request timeout:** 120 seconds
+- **Connection timeout:** 10 seconds
+
+## Message Format
+
+### System Blocks
+
+Sent as array of blocks:
+
+```json
+{
+  "system": [
+    {"text": "You are a helpful assistant."},
+    {"cachePoint": {"type": "default"}}
+  ]
+}
+```
+
+### User Messages
+
+Text only:
+
+```json
+{
+  "role": "user",
+  "content": [{"text": "Hello!"}]
+}
+```
+
+With images:
+
+```json
+{
+  "role": "user",
+  "content": [
+    {"text": "What's in this image?"},
+    {
+      "image": {
+        "format": "png",
+        "source": {"bytes": "iVBORw0KGgo..."}
+      }
+    }
+  ]
+}
+```
+
+### Assistant Messages
+
+Text only:
+
+```json
+{
+  "role": "assistant",
+  "content": [{"text": "I can help with that."}]
+}
+```
+
+With tool calls:
+
+```json
+{
+  "role": "assistant",
+  "content": [
+    {"text": "Let me check that."},
+    {
+      "toolUse": {
+        "toolUseId": "toolu_123",
+        "name": "get_weather",
+        "input": {"location": "San Francisco"}
+      }
+    }
+  ]
+}
+```
+
+### Tool Results
+
+Sent as user message with `toolResult` blocks:
+
+```json
+{
+  "role": "user",
+  "content": [{
+    "toolResult": {
+      "toolUseId": "toolu_123",
+      "content": [{"text": "Temperature: 72°F, Sunny"}],
+      "status": "success"
+    }
+  }]
+}
+```
+
+Multiple tool results are merged into a single user message.
+
+## AWS SigV4 Signing
+
+### Signature Process
+
+1. Create canonical request
+2. Create string to sign
+3. Derive signing key
+4. Calculate signature
+
+### Canonical URI
+
+Model IDs with colons (e.g., `v1:0`) are percent-encoded:
+
+```rust
+fn encode_model_path(model_id: &str) -> String {
+    model_id.replace(':', "%3A")
+}
+```
+
+### Authorization Header
+
+```text
+AWS4-HMAC-SHA256 Credential={access_key}/{date}/{region}/bedrock/aws4_request, 
+SignedHeaders=content-type;host;x-amz-date;x-amz-security-token, 
+Signature={signature}
+```
+
+### Session Token
+
+For temporary credentials (STS, ECS, EC2):
+
+```bash
+X-Amz-Security-Token: {session_token}
+```
+
+## Stop Reasons
+
+Normalized stop reasons:
+
+| Bedrock | ZeroClaw Normalized |
+|---------|--------------------|
+| `end_turn` | `EndTurn` |
+| `max_tokens` | `MaxTokens` |
+| `stop_sequence` | `StopSequence` |
+| `tool_use` | `ToolUse` |
+| `content_filtered` | `ContentFilter` |
+
+## Error Handling
+
+### Authentication Errors
+
+```text
+Environment variable AWS_ACCESS_KEY_ID is required for Bedrock
+```
+
+**Solution:** Export AWS credentials.
+
+### Region Errors
+
+Default region is `us-east-1`. Override with:
+
+```bash
+export AWS_REGION="us-west-2"
+```
+
+### Model Not Found
+
+Ensure model ID matches Bedrock format:
+
+```text
+anthropic.claude-sonnet-4-6  # Correct
+claude-sonnet-4-6            # Wrong
+```
+
+## Provider Capabilities
+
+```rust
+ProviderCapabilities {
+    native_tool_calling: true,
+    vision: true,
+}
+```
+
+## Model Discovery
+
+Bedrock does not provide a public models endpoint. Use AWS CLI:
+
+```bash
+aws bedrock list-foundation-models --region us-east-1
+```
+
+Or check the [Bedrock model catalog](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html).
+
+## Example Usage
+
+### Simple Chat
+
+```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+zeroclaw agent --provider bedrock \
+  --model anthropic.claude-sonnet-4-6 \
+  -m "Hello!"
+```
+
+### With Tools
+
+```bash
+zeroclaw agent --provider bedrock \
+  --model anthropic.claude-sonnet-4-6 \
+  --enable-tools \
+  -m "What's the weather in San Francisco?"
+```
+
+### With Vision
+
+```bash
+zeroclaw agent --provider bedrock \
+  --model anthropic.claude-sonnet-4-6 \
+  -m "Describe: [IMAGE:data:image/png;base64,iVBORw0KGgo...]"
+```
+
+### Streaming
+
+```bash
+zeroclaw agent --provider bedrock \
+  --model anthropic.claude-sonnet-4-6 \
+  --stream \
+  -m "Write a long story..."
+```
+
+## EC2 Instance Setup
+
+For EC2 instances, attach an IAM role with Bedrock permissions:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream"
+    ],
+    "Resource": "*"
+  }]
+}
+```
+
+No environment variables needed — credentials auto-load from instance metadata.
+
+## ECS/Fargate Setup
+
+For ECS tasks, assign a task IAM role with Bedrock permissions. The provider automatically fetches credentials from the ECS metadata endpoint.
+
+## Limitations
+
+- Max tokens is fixed at 4096 (not configurable per request)
+- Credential refresh is automatic (50-minute TTL)
+- Cross-region inference requires specific model ID format
+- No public model discovery endpoint
+- CRC validation is skipped for EventStream (relies on TLS)
+
+## Related
+
+- [Custom Provider Setup](/api/providers/custom)
+- [Provider Reference](/docs/providers-reference)
+- [Tool Calling Guide](/docs/tool-calling)
+- [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)

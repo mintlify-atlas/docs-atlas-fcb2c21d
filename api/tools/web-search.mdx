@@ -1,0 +1,202 @@
+---
+title: Web Search Tool
+description: Search the web and fetch results
+---
+
+The web search tool enables agents to search the internet and retrieve information.
+
+## Overview
+
+The web search tool provides:
+- Multiple search engine backends
+- Result aggregation and ranking
+- Web page content extraction
+- Rate limiting and caching
+
+## Parameters
+
+<ParamField path="query" type="string" required>
+  Search query string
+</ParamField>
+
+<ParamField path="num_results" type="integer">
+  Number of results to return (default: 5, max: 10)
+</ParamField>
+
+<ParamField path="fetch_content" type="boolean">
+  Whether to fetch full page content (default: false)
+</ParamField>
+
+## Example
+
+```json
+{
+  "query": "ZeroClaw Rust agent framework",
+  "num_results": 5,
+  "fetch_content": true
+}
+```
+
+## Response
+
+<ResponseField name="results" type="array">
+  Array of search results
+</ResponseField>
+
+<Expandable title="result object">
+  <ResponseField name="title" type="string">
+    Page title
+  </ResponseField>
+  
+  <ResponseField name="url" type="string">
+    Page URL
+  </ResponseField>
+  
+  <ResponseField name="snippet" type="string">
+    Brief description or excerpt
+  </ResponseField>
+  
+  <ResponseField name="content" type="string">
+    Full page content (if fetch_content=true)
+  </ResponseField>
+</Expandable>
+
+### Example Response
+
+```json
+{
+  "results": [
+    {
+      "title": "ZeroClaw - GitHub",
+      "url": "https://github.com/zeroclaw-labs/zeroclaw",
+      "snippet": "Fast, small, and fully autonomous AI agent framework",
+      "content": "ZeroClaw is a lightweight Rust framework..."
+    }
+  ]
+}
+```
+
+## Search Backends
+
+<Tabs>
+  <Tab title="DuckDuckGo (Default)">
+    Privacy-focused search with no API key required.
+    
+    **Features:**
+    - No tracking
+    - No API key needed
+    - Good for general queries
+    - Rate limited
+  </Tab>
+  
+  <Tab title="Google Custom Search">
+    Google's programmable search engine.
+    
+    **Setup:**
+    ```bash
+    export GOOGLE_API_KEY="your-api-key"
+    export GOOGLE_CSE_ID="your-cse-id"
+    ```
+    
+    **Features:**
+    - High quality results
+    - Site-specific search
+    - Advanced operators
+    - Requires API key
+  </Tab>
+  
+  <Tab title="Brave Search">
+    Privacy-first search API.
+    
+    **Setup:**
+    ```bash
+    export BRAVE_API_KEY="your-api-key"
+    ```
+    
+    **Features:**
+    - Privacy-focused
+    - No user tracking
+    - Good coverage
+    - Requires API key
+  </Tab>
+</Tabs>
+
+## Configuration
+
+```toml
+[tools]
+web_search_enabled = true
+search_backend = "duckduckgo"  # or "google", "brave"
+max_search_results = 10
+
+[tools.search]
+cache_ttl_seconds = 3600
+request_timeout_seconds = 10
+user_agent = "ZeroClaw/0.1.8"
+```
+
+## Rate Limiting
+
+To avoid overwhelming search engines:
+
+- **DuckDuckGo**: 1 request per second
+- **Google**: 100 queries per day (free tier)
+- **Brave**: 2000 queries per month (free tier)
+
+Results are cached for 1 hour by default.
+
+## Content Extraction
+
+When `fetch_content=true`, the tool:
+
+1. Fetches the full HTML page
+2. Extracts main content (removes ads, navigation)
+3. Converts HTML to plain text or markdown
+4. Truncates to 10,000 characters
+
+<Warning>
+  Fetching content significantly increases response time and may trigger rate limits.
+</Warning>
+
+## Security
+
+- HTTPS enforcement
+- Domain allowlist (optional)
+- Content size limits
+- Request timeouts
+- XSS prevention in extracted content
+
+```toml
+[security]
+web_search_allowed_domains = [
+    "*.github.com",
+    "*.wikipedia.org",
+    "docs.rs"
+]
+```
+
+## Examples
+
+### Quick Search
+
+```bash
+zeroclaw agent -m "Search for Rust async best practices"
+```
+
+The agent will use web_search tool automatically.
+
+### Fetch Full Content
+
+```bash
+zeroclaw agent -m "Find and summarize the latest Rust 1.87 release notes"
+```
+
+## Source Code
+
+Implementation: [`src/tools/web_search.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/web_search.rs)
+
+## Related
+
+- [Browser Tool](/api/tools/browser)
+- [Tool Trait](/api/tool-trait)
+- [Creating Tools](/guides/creating-tools)

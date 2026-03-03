@@ -1,0 +1,443 @@
+---
+title: Google Gemini Provider
+description: API reference for the Google Gemini provider
+---
+
+## Overview
+
+The Gemini provider enables ZeroClaw to use Google's Gemini models via either API key or OAuth authentication.
+
+**Provider ID:** `gemini`
+
+**Aliases:** `google`, `google-gemini`
+
+**Public API URL:** `https://generativelanguage.googleapis.com/v1beta`
+
+**OAuth Internal API URL:** `https://cloudcode-pa.googleapis.com/v1internal`
+
+## Authentication
+
+### Priority Order
+
+1. Explicit API key from config
+2. `GEMINI_API_KEY` environment variable
+3. `GOOGLE_API_KEY` environment variable
+4. Managed OAuth from `auth-profiles.json`
+5. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
+
+### API Key Authentication
+
+Get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey):
+
+```bash
+export GEMINI_API_KEY="AIza..."
+zeroclaw agent --provider gemini --model gemini-3-pro-preview -m "Hello!"
+```
+
+### OAuth Authentication (Gemini CLI)
+
+Reuse Gemini CLI credentials:
+
+```bash
+gemini login  # Authenticate with Gemini CLI
+zeroclaw agent --provider gemini --model gemini-3-pro-preview -m "Hello!"
+```
+
+Credentials are cached in `~/.gemini/oauth_creds.json`.
+
+### Managed OAuth (Auth Profiles)
+
+Use ZeroClaw's auth system:
+
+```bash
+zeroclaw auth login --provider gemini
+zeroclaw agent --provider gemini --model gemini-3-pro-preview -m "Hello!"
+```
+
+### OAuth Project Resolution
+
+For OAuth users, the GCP project is resolved via `loadCodeAssist` endpoint:
+
+1. Check `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID`
+2. Call `https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist`
+3. Extract `cloudaicompanionProject` from response
+4. Cache for subsequent requests
+
+## Configuration
+
+### Config File
+
+```toml
+default_provider = "gemini"
+api_key = "AIza..."
+default_model = "gemini-3-pro-preview"
+default_temperature = 0.7
+```
+
+### OAuth Config
+
+```toml
+default_provider = "gemini"
+# Credentials auto-loaded from ~/.gemini/oauth_creds.json
+default_model = "gemini-3-pro-preview"
+```
+
+## Features
+
+### Native Tool Calling
+
+**Supported:** No
+
+Gemini does not support native tool calling in the current implementation. Tool requests will fail.
+
+### Vision Support
+
+**Supported:** Yes
+
+Images are sent as inline data with base64 encoding:
+
+```json
+{
+  "inlineData": {
+    "mimeType": "image/png",
+    "data": "iVBORw0KGgo..."
+  }
+}
+```
+
+Image markers in user messages:
+
+```text
+[IMAGE:data:image/png;base64,iVBORw0KGgo...]
+```
+
+### Thinking Models
+
+**Supported:** Yes
+
+Thinking models (e.g., `gemini-3-pro-preview`) mark reasoning parts with `thought: true`:
+
+```json
+{
+  "parts": [
+    {
+      "thought": true,
+      "text": "Let me think about this..."
+    },
+    {
+      "text": "The answer is..."
+    }
+  ]
+}
+```
+
+ZeroClaw automatically filters thinking parts and returns only the final answer.
+
+### Token Usage Tracking
+
+**Supported:** Yes
+
+Usage data is extracted from response:
+
+```json
+{
+  "usageMetadata": {
+    "promptTokenCount": 100,
+    "candidatesTokenCount": 50
+  }
+}
+```
+
+## API Endpoints
+
+### Generate Content (API Key)
+
+**Endpoint:** `POST /v1beta/models/{model}:generateContent?key={api_key}`
+
+**Request:**
+
+```json
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [{"text": "Hello!"}]
+    }
+  ],
+  "systemInstruction": {
+    "parts": [{"text": "You are a helpful assistant."}]
+  },
+  "generationConfig": {
+    "temperature": 0.7,
+    "maxOutputTokens": 8192
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "candidates": [{
+    "content": {
+      "parts": [{"text": "Hello! How can I help?"}]
+    },
+    "finishReason": "STOP"
+  }],
+  "usageMetadata": {
+    "promptTokenCount": 12,
+    "candidatesTokenCount": 9
+  }
+}
+```
+
+### Generate Content (OAuth)
+
+**Endpoint:** `POST https://cloudcode-pa.googleapis.com/v1internal:generateContent`
+
+**Authorization:** `Bearer <oauth_token>`
+
+**Request:**
+
+```json
+{
+  "model": "gemini-3-pro-preview",
+  "project": "your-gcp-project",
+  "user_prompt_id": "uuid-...",
+  "request": {
+    "contents": [...],
+    "systemInstruction": {...},
+    "generationConfig": {...}
+  }
+}
+```
+
+**Response:** Same format as API key, nested under `response` field.
+
+## Request Configuration
+
+### Max Tokens
+
+**Default:** 8192
+
+Fixed in the provider implementation.
+
+### Temperature
+
+**Range:** 0.0 - 2.0
+
+**Default:** 0.7 (from config)
+
+### Timeouts
+
+- **Request timeout:** 120 seconds
+- **Connection timeout:** 10 seconds
+
+## Message Format
+
+### System Instruction
+
+Sent as top-level `systemInstruction`:
+
+```json
+{
+  "systemInstruction": {
+    "parts": [{"text": "You are a helpful assistant."}]
+  }
+}
+```
+
+Multiple system messages are merged with `\n\n`.
+
+### User Messages
+
+Simple text:
+
+```json
+{
+  "role": "user",
+  "parts": [{"text": "Hello!"}]
+}
+```
+
+With images:
+
+```json
+{
+  "role": "user",
+  "parts": [
+    {"text": "What's in this image?"},
+    {
+      "inlineData": {
+        "mimeType": "image/png",
+        "data": "iVBORw0KGgo..."
+      }
+    }
+  ]
+}
+```
+
+### Assistant Messages
+
+Gemini uses `model` role instead of `assistant`:
+
+```json
+{
+  "role": "model",
+  "parts": [{"text": "I can help with that."}]
+}
+```
+
+## OAuth Token Refresh
+
+Gemini CLI OAuth tokens are automatically refreshed when:
+
+1. Token expiry is unknown
+2. Token is already expired
+3. Token will expire within 60 seconds
+
+**Refresh endpoint:** `https://oauth2.googleapis.com/token`
+
+**Refresh request:**
+
+```json
+{
+  "grant_type": "refresh_token",
+  "refresh_token": "...",
+  "client_id": "...",
+  "client_secret": "..."
+}
+```
+
+## OAuth Credential Rotation
+
+Multiple OAuth credential files are supported:
+
+- `~/.gemini/oauth_creds.json` (primary)
+- `~/.gemini-*-home/.gemini/oauth_creds.json` (additional)
+
+On rate limit or server errors, the provider automatically rotates to the next credential.
+
+## Stop Reasons
+
+Normalized stop reasons:
+
+| Gemini | ZeroClaw Normalized |
+|--------|--------------------|
+| `STOP` | `EndTurn` |
+| `MAX_TOKENS` | `MaxTokens` |
+| `SAFETY` | `ContentFilter` |
+| `RECITATION` | `ContentFilter` |
+
+## Error Handling
+
+### Authentication Errors
+
+```text
+Gemini API key not found. Options:
+1. Set GEMINI_API_KEY env var
+2. Run `gemini` CLI to authenticate (tokens will be reused)
+3. Run `zeroclaw auth login --provider gemini`
+4. Get an API key from https://aistudio.google.com/app/apikey
+5. Run `zeroclaw onboard` to configure
+```
+
+### OAuth Errors
+
+For rate limits or service errors, the provider automatically:
+
+1. Rotates to next OAuth credential (if available)
+2. Refreshes the token
+3. Retries the request
+
+### Generation Config Errors
+
+Some OAuth endpoints reject `generationConfig`. The provider automatically retries without it:
+
+```text
+Gemini OAuth internal endpoint rejected generationConfig; 
+retrying without generationConfig
+```
+
+## Provider Capabilities
+
+```rust
+ProviderCapabilities {
+    native_tool_calling: false,
+    vision: true,
+}
+```
+
+## Warmup
+
+**Supported:** Yes
+
+For API key users, warmup calls the `/models` endpoint:
+
+```bash
+zeroclaw warmup --provider gemini
+```
+
+For OAuth users, warmup verifies and refreshes the token without making a full request.
+
+## Example Usage
+
+### API Key
+
+```bash
+export GEMINI_API_KEY="AIza..."
+zeroclaw agent --provider gemini --model gemini-3-pro-preview -m "Hello!"
+```
+
+### OAuth (Gemini CLI)
+
+```bash
+gemini login
+zeroclaw agent --provider gemini --model gemini-3-pro-preview -m "Hello!"
+```
+
+### With Vision
+
+```bash
+zeroclaw agent --provider gemini \
+  --model gemini-3-pro-preview \
+  -m "Describe: [IMAGE:data:image/png;base64,iVBORw0KGgo...]"
+```
+
+### Thinking Model
+
+```bash
+zeroclaw agent --provider gemini \
+  --model gemini-3-pro-preview \
+  -m "Solve this complex problem step by step..."
+```
+
+## Authentication Source Diagnostics
+
+Check which credential source is active:
+
+```rust
+provider.auth_source()
+```
+
+Returns:
+- `"config"` - Explicit API key from config
+- `"GEMINI_API_KEY env var"` - From env var
+- `"GOOGLE_API_KEY env var"` - From env var
+- `"Gemini CLI OAuth"` - From `~/.gemini/oauth_creds.json`
+- `"auth-profiles"` - Managed OAuth
+- `"none"` - No credentials
+
+## Limitations
+
+- No native tool calling support
+- OAuth requires GCP project resolution
+- OAuth users must use internal Code Assist API
+- Generation config may not work with some OAuth endpoints
+- Thinking parts are automatically filtered (not exposed)
+
+## Related
+
+- [Custom Provider Setup](/api/providers/custom)
+- [Provider Reference](/docs/providers-reference)
+- [OAuth Setup Guide](/docs/auth-setup)

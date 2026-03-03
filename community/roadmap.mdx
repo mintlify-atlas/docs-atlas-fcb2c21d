@@ -1,0 +1,408 @@
+---
+title: Project Roadmap
+description: Future plans and development priorities for ZeroClaw
+---
+
+# Project Roadmap
+
+ZeroClaw's development focuses on performance, security, and extensibility. This roadmap outlines our priorities and planned improvements.
+
+<Warning>
+  This roadmap represents planned work and may change based on community feedback, security needs, and technical discoveries. Timelines are estimates.
+</Warning>
+
+## Current Status
+
+ZeroClaw v0.1.0 established a strong foundation:
+
+<CardGroup cols={2}>
+  <Card title="Performance" icon="bolt">
+    - **3.1MB** binary size
+    - **&lt;5MB** RAM usage
+    - **&lt;10ms** startup time
+  </Card>
+  <Card title="Security" icon="shield">
+    - Command allowlisting
+    - Path traversal protection
+    - Workspace sandboxing
+    - Rate limiting
+  </Card>
+  <Card title="Architecture" icon="puzzle-piece">
+    - Trait-based design
+    - Pluggable providers
+    - Swappable channels
+    - Custom tools
+  </Card>
+  <Card title="Testing" icon="flask">
+    - 159 inline tests
+    - Edge case coverage
+    - Security validation
+  </Card>
+</CardGroup>
+
+---
+
+## Security Hardening Roadmap
+
+<Info>
+  ZeroClaw already has excellent application-layer security. The roadmap focuses on OS-level containment for production deployments.
+</Info>
+
+### Phase 1: Quick Wins (1-2 weeks)
+
+**Goal**: Address critical gaps with minimal complexity
+
+<AccordionGroup>
+  <Accordion title="Landlock Filesystem Sandbox">
+    **File**: `src/security/landlock.rs`  
+    **Effort**: 2 days  
+    **Impact**: High
+    
+    Restrict filesystem access to workspace using Linux Landlock LSM.
+  </Accordion>
+  
+  <Accordion title="Memory Monitoring + OOM Kill">
+    **File**: `src/resources/memory.rs`  
+    **Effort**: 1 day  
+    **Impact**: High
+    
+    Monitor memory usage and kill runaway processes before system instability.
+  </Accordion>
+  
+  <Accordion title="CPU Timeout per Command">
+    **File**: `src/tools/shell.rs`  
+    **Effort**: 1 day  
+    **Impact**: High
+    
+    Enforce per-command CPU time limits to prevent infinite loops.
+  </Accordion>
+  
+  <Accordion title="Basic Audit Logging">
+    **File**: `src/security/audit.rs`  
+    **Effort**: 2 days  
+    **Impact**: Medium
+    
+    Tamper-evident logging of all agent actions with HMAC signatures.
+  </Accordion>
+</AccordionGroup>
+
+**Deliverables**:
+- Linux: Filesystem access restricted to workspace
+- All platforms: Memory/CPU guards against runaway commands
+- All platforms: Tamper-evident audit trail
+
+### Phase 2: Platform Integration (2-3 weeks)
+
+**Goal**: Deep OS integration for production-grade isolation
+
+<AccordionGroup>
+  <Accordion title="Firejail Auto-Detection">
+    **Effort**: 3 days  
+    **Impact**: Very High
+    
+    Detect and wrap agent execution in Firejail for container-like isolation on Linux.
+  </Accordion>
+  
+  <Accordion title="Bubblewrap Wrapper">
+    **Effort**: 4 days  
+    **Impact**: Very High
+    
+    Filesystem isolation for macOS and other *nix systems using Bubblewrap.
+  </Accordion>
+  
+  <Accordion title="cgroups v2 Integration">
+    **Effort**: 3 days  
+    **Impact**: High
+    
+    Enforce resource limits using systemd cgroups v2 on Linux.
+  </Accordion>
+  
+  <Accordion title="seccomp Syscall Filtering">
+    **Effort**: 5 days  
+    **Impact**: High
+    
+    Allowlist permitted syscalls to reduce attack surface.
+  </Accordion>
+  
+  <Accordion title="Audit Log Query CLI">
+    **Effort**: 2 days  
+    **Impact**: Medium
+    
+    Command-line tools for querying and analyzing audit logs.
+  </Accordion>
+</AccordionGroup>
+
+**Deliverables**:
+- Linux: Full container-like isolation via Firejail
+- macOS: Bubblewrap filesystem isolation
+- Linux: cgroups resource enforcement
+- Linux: Syscall allowlisting
+
+### Phase 3: Production Hardening (1-2 weeks)
+
+**Goal**: Enterprise security features
+
+<AccordionGroup>
+  <Accordion title="Docker Sandbox Mode">
+    **Effort**: 3 days  
+    **Impact**: High
+    
+    Optional Docker-based execution isolation for maximum security.
+  </Accordion>
+  
+  <Accordion title="Certificate Pinning">
+    **Effort**: 2 days  
+    **Impact**: Medium
+    
+    HTTPS certificate pinning for channel webhooks to prevent MITM attacks.
+  </Accordion>
+  
+  <Accordion title="Signed Config Verification">
+    **Effort**: 2 days  
+    **Impact**: Medium
+    
+    Verify config file signatures to detect tampering.
+  </Accordion>
+  
+  <Accordion title="SIEM-Compatible Audit Export">
+    **Effort**: 2 days  
+    **Impact**: Medium
+    
+    JSON/CSV audit export for integration with external SIEM systems.
+  </Accordion>
+  
+  <Accordion title="Security Self-Test">
+    **Effort**: 1 day  
+    **Impact**: Low
+    
+    `zeroclaw audit --check` command to validate security configuration.
+  </Accordion>
+</AccordionGroup>
+
+**Deliverables**:
+- Optional Docker-based execution isolation
+- HTTPS certificate pinning for webhooks
+- Config file signature verification
+- JSON/CSV audit export
+
+---
+
+## Planned Config Schema
+
+Proposed configuration for security features:
+
+```toml
+[security]
+level = "strict"  # relaxed | default | strict | paranoid
+
+# Sandbox configuration
+[security.sandbox]
+enabled = true
+backend = "auto"  # auto | firejail | bubblewrap | landlock | docker | none
+
+# Resource limits
+[resources]
+max_memory_mb = 512
+max_memory_per_command_mb = 128
+max_cpu_percent = 50
+max_cpu_time_seconds = 60
+max_subprocesses = 10
+
+# Audit logging
+[security.audit]
+enabled = true
+log_path = "~/.config/zeroclaw/audit.log"
+sign_events = true
+max_size_mb = 100
+
+# Autonomy (existing, enhanced)
+[autonomy]
+level = "supervised"  # readonly | supervised | full
+allowed_commands = ["git", "ls", "cat", "grep", "find"]
+forbidden_paths = ["/etc", "/root", "~/.ssh"]
+require_approval_for_medium_risk = true
+block_high_risk_commands = true
+max_actions_per_hour = 20
+```
+
+---
+
+## Feature Roadmap
+
+### Agent Capabilities
+
+<AccordionGroup>
+  <Accordion title="Multi-Agent Coordination">
+    **Status**: Research phase
+    
+    Enable multiple agents to collaborate on complex tasks with shared context and work distribution.
+  </Accordion>
+  
+  <Accordion title="Streaming Responses">
+    **Status**: Planned
+    
+    Real-time streaming of LLM responses for better UX in interactive channels.
+  </Accordion>
+  
+  <Accordion title="Tool Composition">
+    **Status**: Exploration
+    
+    Allow tools to call other tools to build complex workflows.
+  </Accordion>
+  
+  <Accordion title="Memory Embeddings">
+    **Status**: In progress
+    
+    Vector embeddings for semantic memory search beyond keyword matching.
+  </Accordion>
+</AccordionGroup>
+
+### Platform Support
+
+<AccordionGroup>
+  <Accordion title="Windows Native Support">
+    **Status**: Planned
+    
+    First-class Windows support with native security primitives.
+  </Accordion>
+  
+  <Accordion title="WebAssembly Runtime">
+    **Status**: Experimental
+    
+    Run ZeroClaw in browser environments with WASM compilation.
+  </Accordion>
+  
+  <Accordion title="ESP32 / Edge Devices">
+    **Status**: Research
+    
+    Ultra-minimal runtime for WiFi-enabled edge devices.
+  </Accordion>
+</AccordionGroup>
+
+### Developer Experience
+
+<AccordionGroup>
+  <Accordion title="Plugin SDK">
+    **Status**: In progress
+    
+    Comprehensive SDK for building and testing plugins locally.
+  </Accordion>
+  
+  <Accordion title="Hot Reloading">
+    **Status**: Planned
+    
+    Reload plugins and configuration without restarting the agent.
+  </Accordion>
+  
+  <Accordion title="Debug Mode">
+    **Status**: Planned
+    
+    Enhanced debugging tools with step-through execution and state inspection.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Comparison: ZeroClaw vs Alternatives
+
+How security roadmap implementation positions ZeroClaw:
+
+| Feature | PicoClaw | ZeroClaw Now | ZeroClaw + Roadmap | Production Target |
+|---------|----------|--------------|-------------------|-------------------|
+| **Binary Size** | ~8MB | **3.4MB** ✅ | 3.5-4MB | &lt; 5MB |
+| **RAM Usage** | &lt; 10MB | **&lt; 5MB** ✅ | &lt; 10MB | &lt; 20MB |
+| **Startup Time** | &lt; 1s | **&lt; 10ms** ✅ | &lt; 50ms | &lt; 100ms |
+| **Command Allowlist** | Unknown | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Path Blocking** | Unknown | ✅ Yes | ✅ Yes | ✅ Yes |
+| **Injection Protection** | Unknown | ✅ Yes | ✅ Yes | ✅ Yes |
+| **OS Sandbox** | No | ❌ No | ✅ Firejail/Landlock | ✅ Container/namespaces |
+| **Resource Limits** | No | ❌ No | ✅ cgroups/Monitor | ✅ Full cgroups |
+| **Audit Logging** | No | ❌ No | ✅ HMAC-signed | ✅ SIEM integration |
+| **Security Score** | C | **B+** | **A-** | **A+** |
+
+---
+
+## Community Priorities
+
+We're listening to the community. Vote on features and share feedback:
+
+<CardGroup cols={2}>
+  <Card title="Feature Requests" icon="lightbulb" href="https://github.com/zeroclaw-labs/zeroclaw/discussions/categories/ideas">
+    Propose and vote on new features
+  </Card>
+  <Card title="Roadmap Discussions" icon="comments" href="https://github.com/zeroclaw-labs/zeroclaw/discussions/categories/roadmap">
+    Discuss priorities and timelines
+  </Card>
+  <Card title="Security RFCs" icon="shield-halved" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/docs/security">
+    Review security proposals
+  </Card>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/zeroclaw-labs/zeroclaw/issues">
+    Track specific work items
+  </Card>
+</CardGroup>
+
+---
+
+## Estimated Timeline
+
+<Steps>
+  <Step title="Q1 2026 - Security Phase 1">
+    Landlock, memory monitoring, CPU timeouts, basic audit logging
+  </Step>
+  <Step title="Q2 2026 - Security Phase 2">
+    Firejail, Bubblewrap, cgroups, seccomp filtering
+  </Step>
+  <Step title="Q2 2026 - Security Phase 3">
+    Docker mode, certificate pinning, signed configs, SIEM export
+  </Step>
+  <Step title="Q3 2026 - Feature Expansion">
+    Streaming, multi-agent coordination, enhanced memory
+  </Step>
+  <Step title="Q4 2026 - Platform Expansion">
+    Windows native support, edge device runtime
+  </Step>
+</Steps>
+
+<Warning>
+  Timelines are estimates and subject to change based on community needs, security discoveries, and maintainer availability.
+</Warning>
+
+---
+
+## How to Contribute
+
+Want to help shape the roadmap?
+
+<CardGroup cols={2}>
+  <Card title="Implementation" icon="code" href="/community/contributing">
+    Contribute code for roadmap items
+  </Card>
+  <Card title="Testing" icon="flask" href="https://github.com/zeroclaw-labs/zeroclaw/blob/main/CONTRIBUTING.md#pull-request-checklist">
+    Test experimental features
+  </Card>
+  <Card title="Documentation" icon="book" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/docs">
+    Document new capabilities
+  </Card>
+  <Card title="Feedback" icon="message" href="https://github.com/zeroclaw-labs/zeroclaw/discussions">
+    Share use cases and priorities
+  </Card>
+</CardGroup>
+
+---
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Security Roadmap (Full)" icon="shield" href="https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/security-roadmap.md">
+    Detailed security improvement plan
+  </Card>
+  <Card title="Architecture Docs" icon="sitemap" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/docs">
+    System design and patterns
+  </Card>
+  <Card title="Changelog" icon="scroll" href="/community/changelog">
+    Recent changes and releases
+  </Card>
+  <Card title="Contributing Guide" icon="code-pull-request" href="/community/contributing">
+    How to get involved
+  </Card>
+</CardGroup>

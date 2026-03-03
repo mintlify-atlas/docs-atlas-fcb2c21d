@@ -1,0 +1,226 @@
+---
+title: System Architecture
+description: High-level architectural overview of the ZeroClaw autonomous agent runtime
+---
+
+# System Architecture
+
+ZeroClaw is a Rust-first autonomous agent runtime built on a trait-driven, modular architecture designed for high performance, security, and extensibility.
+
+## Design Principles
+
+The architecture is guided by these core principles:
+
+- **Trait + Factory Pattern**: Extension points are intentionally explicit and swappable
+- **Security-First**: Defaults lean secure-by-default with pairing, bind safety, limits, and secret handling
+- **Performance Goals**: Binary size and execution speed are product goals, not nice-to-haves
+- **Config as API**: Schema and CLI commands are effectively public interfaces
+- **Deterministic Behavior**: Reliable CI and reproducibility are mandatory
+
+## High-Level Component View
+
+```mermaid
+graph TB
+    CLI[CLI Entrypoint] --> Agent[Agent Orchestrator]
+    Agent --> Providers[Provider System]
+    Agent --> Channels[Channel System]
+    Agent --> Tools[Tool System]
+    Agent --> Memory[Memory System]
+    
+    Security[Security Policy] --> Tools
+    Security --> Runtime[Runtime Adapter]
+    
+    Gateway[Gateway Server] --> Agent
+    
+    Providers --> OpenAI[OpenAI]
+    Providers --> Anthropic[Anthropic]
+    Providers --> Gemini[Gemini]
+    Providers --> Ollama[Ollama]
+    
+    Channels --> Telegram[Telegram]
+    Channels --> Discord[Discord]
+    Channels --> Slack[Slack]
+    Channels --> CLI_Ch[CLI]
+    
+    Tools --> Shell[Shell]
+    Tools --> FileOps[File Ops]
+    Tools --> Browser[Browser]
+    Tools --> HTTP[HTTP Request]
+    
+    Memory --> Markdown[Markdown]
+    Memory --> SQLite[SQLite]
+    Memory --> Chroma[Chroma]
+    
+    Runtime --> Native[Native]
+    Runtime --> Docker[Docker]
+    Runtime --> Sandbox[Sandbox]
+```
+
+## Module Structure
+
+The codebase follows a clear module hierarchy:
+
+```
+src/
+├── main.rs              # CLI entrypoint and command routing
+├── lib.rs               # Module exports and shared command enums
+├── config/              # Schema + config loading/merging
+├── agent/               # Orchestration loop
+├── gateway/             # Webhook/gateway server
+├── security/            # Policy, pairing, secret store
+│   ├── policy.rs        # SecurityPolicy and AutonomyLevel
+│   ├── pairing.rs       # Device pairing for channels
+│   ├── secrets.rs       # Encrypted credential storage
+│   └── traits.rs        # Sandbox trait
+├── memory/              # Persistence backends
+│   └── traits.rs        # Memory trait
+├── providers/           # Model providers
+│   ├── traits.rs        # Provider trait
+│   ├── openai.rs
+│   ├── anthropic.rs
+│   └── ...
+├── channels/            # Messaging platforms
+│   ├── traits.rs        # Channel trait
+│   ├── telegram.rs
+│   ├── discord.rs
+│   └── ...
+├── tools/               # Agent capabilities
+│   ├── traits.rs        # Tool trait
+│   ├── shell.rs
+│   ├── file_read.rs
+│   └── ...
+├── peripherals/         # Hardware peripherals (STM32, RPi GPIO)
+│   └── traits.rs        # Peripheral trait
+├── runtime/             # Runtime adapters
+│   └── traits.rs        # RuntimeAdapter trait
+└── observability/       # Telemetry and tracing
+    └── traits.rs        # Observer trait
+```
+
+## Agent Orchestration Loop
+
+The agent loop (`src/agent/loop_.rs`) coordinates the execution cycle:
+
+1. **Message Reception**: Channel delivers user message
+2. **Context Assembly**: Load conversation history and system prompt
+3. **Provider Invocation**: LLM generates response with optional tool calls
+4. **Tool Execution**: Validate and execute requested tools
+5. **Security Gates**: Apply policy checks at each boundary
+6. **Memory Storage**: Persist important facts and decisions
+7. **Response Delivery**: Send result back through channel
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Channel
+    participant Agent
+    participant Provider
+    participant Tool
+    participant Security
+    
+    User->>Channel: Send message
+    Channel->>Agent: ChannelMessage
+    Agent->>Security: Validate autonomy
+    Agent->>Provider: chat(messages, tools)
+    Provider-->>Agent: ChatResponse (tool_calls)
+    
+    loop For each tool call
+        Agent->>Security: Validate command/path
+        Security-->>Agent: Policy check result
+        Agent->>Tool: execute(args)
+        Tool-->>Agent: ToolResult
+    end
+    
+    Agent->>Provider: chat(with tool results)
+    Provider-->>Agent: Final response
+    Agent->>Channel: Send response
+    Channel->>User: Deliver message
+```
+
+## Extension Points
+
+The architecture defines explicit extension points through traits:
+
+| Extension Point | Trait | Description |
+|----------------|-------|-------------|
+| Model Inference | `Provider` | Add new LLM backends (OpenAI, Anthropic, local models) |
+| Messaging | `Channel` | Add new communication platforms (Telegram, Discord, Slack) |
+| Capabilities | `Tool` | Add new agent capabilities (shell, files, HTTP, browser) |
+| Persistence | `Memory` | Add new memory backends (markdown, SQLite, vector DBs) |
+| Isolation | `Sandbox` | Add new sandboxing backends (Docker, Firejail, Landlock) |
+| Hardware | `Peripheral` | Add new hardware boards (STM32, RPi GPIO, sensors) |
+| Execution | `RuntimeAdapter` | Add new runtime environments (native, containers) |
+| Telemetry | `Observer` | Add new observability backends (logging, metrics) |
+
+## Security Architecture
+
+Security is layered and defense-in-depth:
+
+```mermaid
+graph TB
+    Request[Tool Request] --> Policy[SecurityPolicy]
+    Policy --> Autonomy{Autonomy Level}
+    
+    Autonomy -->|ReadOnly| Deny[Deny]
+    Autonomy -->|Supervised| Approval{Requires Approval?}
+    Autonomy -->|Full| Sandbox
+    
+    Approval -->|Yes| Wait[Wait for Approval]
+    Approval -->|No| Sandbox
+    Wait -->|Approved| Sandbox
+    Wait -->|Denied| Deny
+    
+    Sandbox[Sandbox] --> CommandCheck{Command Allowed?}
+    CommandCheck -->|No| Deny
+    CommandCheck -->|Yes| PathCheck{Path Allowed?}
+    PathCheck -->|No| Deny
+    PathCheck -->|Yes| RateLimit{Rate Limit?}
+    RateLimit -->|Exceeded| Deny
+    RateLimit -->|OK| Execute[Execute]
+```
+
+Key security components:
+
+- **AutonomyLevel**: Controls agent action permissions (ReadOnly, Supervised, Full)
+- **SecurityPolicy**: Enforces command allowlists, path validation, rate limiting
+- **PairingGuard**: Device authentication for channel access
+- **SecretStore**: Encrypted credential storage with age encryption
+- **Sandbox**: OS-level isolation (Docker, Firejail, Bubblewrap, Landlock)
+
+See [Security Architecture](./security.mdx) for detailed information.
+
+## Configuration System
+
+Configuration is loaded from:
+
+1. `zeroclaw.toml` (workspace config)
+2. `~/.config/zeroclaw/config.toml` (user config)
+3. Environment variables (overrides)
+4. CLI flags (highest priority)
+
+The schema is defined in `src/config/schema.rs` and treated as a public API contract.
+
+## Performance Characteristics
+
+- **Binary Size**: Optimized for minimal size (release profile, careful dependencies)
+- **Startup Time**: Sub-second cold start for CLI commands
+- **Memory Usage**: Efficient async runtime with bounded concurrency
+- **Throughput**: Concurrent message processing across channels
+
+## Observability
+
+The observability subsystem provides:
+
+- **Structured Logging**: `tracing` crate with configurable levels
+- **Audit Trail**: Security-relevant events logged to `AuditLogger`
+- **Runtime Traces**: Performance and execution flow tracking
+- **Health Checks**: Provider, channel, and memory health status
+
+## Next Steps
+
+- [Trait System](./trait-system.mdx) - Deep dive into trait-driven design
+- [Providers](./providers.mdx) - Provider system and factory pattern
+- [Channels](./channels.mdx) - Channel system and message routing
+- [Tools](./tools.mdx) - Tool system and security validation
+- [Memory](./memory.mdx) - Memory backends and persistence
+- [Security](./security.mdx) - Security architecture and policy enforcement

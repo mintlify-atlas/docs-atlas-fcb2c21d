@@ -1,0 +1,451 @@
+---
+title: Anthropic Provider
+description: API reference for the Anthropic Claude provider
+---
+
+## Overview
+
+The Anthropic provider enables ZeroClaw to use Claude models via the Anthropic API. It supports both API key authentication and OAuth setup tokens.
+
+**Provider ID:** `anthropic`
+
+**Base URL:** `https://api.anthropic.com`
+
+**API Version:** `2023-06-01`
+
+## Authentication
+
+### Environment Variables
+
+Credentials are resolved in the following order:
+
+1. `ANTHROPIC_API_KEY` - Standard API key
+2. `ANTHROPIC_OAUTH_TOKEN` - Setup token (OAuth)
+3. Generic fallback: `ZEROCLAW_API_KEY` or `API_KEY`
+
+### Setup Token (OAuth)
+
+Setup tokens use the format `sk-ant-oat01-*` and require special headers:
+
+```bash
+export ANTHROPIC_OAUTH_TOKEN="sk-ant-oat01-..."
+```
+
+Setup tokens send:
+- `Authorization: Bearer <token>`
+- `anthropic-beta: oauth-2025-04-20`
+
+### API Key
+
+Standard API keys use the format `sk-ant-api*` and send:
+- `x-api-key: <key>`
+
+## Configuration
+
+### Config File
+
+```toml
+default_provider = "anthropic"
+api_key = "sk-ant-..."
+default_model = "claude-sonnet-4-6"
+default_temperature = 0.7
+```
+
+### Custom Base URL
+
+For proxy or custom endpoints:
+
+```toml
+default_provider = "anthropic-custom:https://api.example.com"
+api_key = "your-key"
+default_model = "claude-sonnet-4-6"
+```
+
+## Features
+
+### Native Tool Calling
+
+**Supported:** Yes
+
+The provider converts ZeroClaw's tool definitions to Anthropic's native format:
+
+```rust
+// Tool definition format
+{
+  "name": "tool_name",
+  "description": "Tool description",
+  "input_schema": {
+    "type": "object",
+    "properties": {...},
+    "required": [...]
+  }
+}
+```
+
+Tool results are sent as structured content blocks:
+
+```json
+{
+  "role": "user",
+  "content": [{
+    "type": "tool_result",
+    "tool_use_id": "toolu_...",
+    "content": "result text"
+  }]
+}
+```
+
+### Vision Support
+
+**Supported:** Yes
+
+Images are sent as base64-encoded inline data:
+
+```json
+{
+  "type": "image",
+  "source": {
+    "type": "base64",
+    "media_type": "image/png",
+    "data": "iVBORw0KGgo..."
+  }
+}
+```
+
+Image markers in user messages are automatically parsed:
+
+```text
+[IMAGE:data:image/png;base64,iVBORw0KGgo...]
+```
+
+### Prompt Caching (Automatic)
+
+**Enabled by default** for cost optimization.
+
+#### System Prompt Caching
+
+System prompts larger than 3KB (approximately 1024 tokens) are automatically cached:
+
+```json
+{
+  "system": [{
+    "type": "text",
+    "text": "Large system prompt...",
+    "cache_control": {"type": "ephemeral"}
+  }]
+}
+```
+
+#### Conversation Caching
+
+Conversations with more than 4 non-system messages automatically cache the last message:
+
+```json
+{
+  "role": "user",
+  "content": [{
+    "text": "Latest message...",
+    "cache_control": {"type": "ephemeral"}
+  }]
+}
+```
+
+#### Tool Definition Caching
+
+When tools are provided, the last tool definition is automatically cached:
+
+```json
+{
+  "tools": [
+    {"name": "tool1", ...},
+    {
+      "name": "tool2",
+      "cache_control": {"type": "ephemeral"}
+    }
+  ]
+}
+```
+
+### Token Usage Tracking
+
+**Supported:** Yes
+
+Usage data is extracted from response:
+
+```json
+{
+  "usage": {
+    "input_tokens": 300,
+    "output_tokens": 75
+  }
+}
+```
+
+## API Endpoints
+
+### Chat Completion
+
+**Endpoint:** `POST /v1/messages`
+
+**Request:**
+
+```json
+{
+  "model": "claude-sonnet-4-6",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "system": "You are a helpful assistant.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Hello! How can I help you?"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 9
+  }
+}
+```
+
+## Request Configuration
+
+### Max Tokens
+
+**Default:** 4096
+
+Fixed in the provider implementation. Use model-specific limits for production.
+
+### Temperature
+
+**Range:** 0.0 - 2.0
+
+**Default:** 0.7 (from config)
+
+Controls response randomness.
+
+### Timeouts
+
+- **Request timeout:** 120 seconds
+- **Connection timeout:** 10 seconds
+
+## Message Format
+
+### System Prompt
+
+Sent as top-level `system` field:
+
+```json
+{
+  "system": "You are a helpful assistant.",
+  "messages": [...]
+}
+```
+
+Or as structured blocks with cache control:
+
+```json
+{
+  "system": [{
+    "type": "text",
+    "text": "System prompt...",
+    "cache_control": {"type": "ephemeral"}
+  }],
+  "messages": [...]
+}
+```
+
+### User Messages
+
+Simple text:
+
+```json
+{
+  "role": "user",
+  "content": [{
+    "type": "text",
+    "text": "Hello!"
+  }]
+}
+```
+
+With images:
+
+```json
+{
+  "role": "user",
+  "content": [
+    {
+      "type": "text",
+      "text": "What's in this image?"
+    },
+    {
+      "type": "image",
+      "source": {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "..."
+      }
+    }
+  ]
+}
+```
+
+### Assistant Messages
+
+Text only:
+
+```json
+{
+  "role": "assistant",
+  "content": [{
+    "type": "text",
+    "text": "I can help with that."
+  }]
+}
+```
+
+With tool calls:
+
+```json
+{
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Let me check that for you."
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_123",
+      "name": "get_weather",
+      "input": {"location": "San Francisco"}
+    }
+  ]
+}
+```
+
+### Tool Results
+
+Sent as user message with tool_result blocks:
+
+```json
+{
+  "role": "user",
+  "content": [{
+    "type": "tool_result",
+    "tool_use_id": "toolu_123",
+    "content": "Temperature: 72°F, Sunny"
+  }]
+}
+```
+
+## Stop Reasons
+
+Normalized stop reasons:
+
+| Anthropic | ZeroClaw Normalized |
+|-----------|--------------------|
+| `end_turn` | `EndTurn` |
+| `max_tokens` | `MaxTokens` |
+| `stop_sequence` | `StopSequence` |
+| `tool_use` | `ToolUse` |
+
+## Error Handling
+
+### Authentication Errors
+
+```text
+AnthropicProvider error: Anthropic credentials not set. 
+Set ANTHROPIC_API_KEY or ANTHROPIC_OAUTH_TOKEN (setup-token).
+```
+
+**Solution:** Export the appropriate environment variable.
+
+### Rate Limiting
+
+HTTP 429 responses include retry information in headers. ZeroClaw's quota adapter automatically extracts rate limit metadata.
+
+### API Errors
+
+Error responses are sanitized before display:
+
+```rust
+if !response.status().is_success() {
+    return Err(api_error("Anthropic", response).await);
+}
+```
+
+## Provider Capabilities
+
+```rust
+ProviderCapabilities {
+    native_tool_calling: true,
+    vision: true,
+}
+```
+
+## Warmup
+
+**Supported:** Yes
+
+Sends a minimal request to establish TLS and HTTP/2 connections:
+
+```bash
+zeroclaw warmup --provider anthropic
+```
+
+Non-blocking and accepts any response (including errors) as warmup is for connection setup only.
+
+## Example Usage
+
+### Simple Chat
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+zeroclaw agent --provider anthropic --model claude-sonnet-4-6 -m "Hello!"
+```
+
+### With Tools
+
+```bash
+zeroclaw agent --provider anthropic \
+  --model claude-sonnet-4-6 \
+  --enable-tools \
+  -m "What's the weather in San Francisco?"
+```
+
+### With Vision
+
+```bash
+zeroclaw agent --provider anthropic \
+  --model claude-sonnet-4-6 \
+  -m "Describe this image: [IMAGE:data:image/png;base64,iVBORw0KGgo...]"
+```
+
+## Limitations
+
+- Max tokens is fixed at 4096 (not configurable per request)
+- Only ephemeral cache type is supported
+- System prompt is consolidated (multiple system messages merge)
+- Image format auto-detection from base64 data URI
+
+## Related
+
+- [Custom Provider Setup](/api/providers/custom)
+- [Provider Reference](/docs/providers-reference)
+- [Tool Calling Guide](/docs/tool-calling)

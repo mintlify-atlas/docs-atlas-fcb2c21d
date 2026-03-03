@@ -1,0 +1,499 @@
+---
+title: Telegram Channel
+description: Telegram Bot API channel for real-time messaging with advanced features
+---
+
+# Telegram Channel
+
+The Telegram channel enables ZeroClaw to communicate via Telegram's Bot API with support for polling, streaming responses, attachments, and group chat controls.
+
+## Overview
+
+- **Channel Name**: `telegram`
+- **Transport**: Long-polling (Bot API)
+- **Authentication**: Bot token
+- **Public Port Required**: No
+- **Supports**: Text, images, documents, voice messages, video notes
+
+## Configuration
+
+### Required Settings
+
+```toml
+[channels_config.telegram]
+bot_token = "123456:YOUR_BOT_TOKEN_HERE"
+allowed_users = ["*"]  # or specific usernames/IDs
+```
+
+### Complete Configuration
+
+```toml
+[channels_config.telegram]
+bot_token = "123456:YOUR_BOT_TOKEN_HERE"
+allowed_users = ["username1", "123456789"]  # usernames or numeric IDs
+stream_mode = "off"  # off | partial
+draft_update_interval_ms = 1000  # edit throttle for partial streaming
+mention_only = false  # legacy; prefer group_reply.mode
+interrupt_on_new_message = false  # cancel in-flight same-sender requests
+ack_enabled = true  # send emoji reaction acknowledgments
+
+[channels_config.telegram.group_reply]
+mode = "all_messages"  # all_messages | mention_only
+allowed_sender_ids = []  # IDs that bypass mention gate
+```
+
+### Environment Variables
+
+You can override configuration with environment variables:
+
+```bash
+ZEROCLAW_TELEGRAM_BOT_TOKEN=123456:your-token
+```
+
+## Authentication
+
+### Getting a Bot Token
+
+1. Open Telegram and search for `@BotFather`
+2. Send `/newbot` and follow the prompts
+3. Copy the bot token (format: `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
+4. Add the token to your configuration
+
+### User Authorization
+
+#### Pairing Mode (No Allowed Users)
+
+If `allowed_users` is empty, the channel starts in pairing mode:
+
+```bash
+$ zeroclaw daemon
+🔐 Telegram pairing required. One-time bind code: ABC123
+   Send `/bind ABC123` from your Telegram account.
+```
+
+Send the bind command from Telegram:
+
+```
+/bind ABC123
+```
+
+The bot will respond:
+
+```
+✅ Telegram account bound successfully. You can talk to ZeroClaw now.
+```
+
+Your identity is automatically added to `allowed_users` in the config file.
+
+#### Allowlist Format
+
+```toml
+allowed_users = [
+    "alice",      # Telegram username (without @)
+    "123456789",  # Numeric user ID
+    "*"           # Wildcard (allow everyone - testing only)
+]
+```
+
+## Features
+
+### Message Splitting
+
+Telegram has a 4096 character limit. ZeroClaw automatically:
+
+- Splits long messages at word boundaries
+- Prefers splitting at newlines
+- Adds continuation markers when needed
+- Sends multiple messages sequentially
+
+### Streaming Responses
+
+Control how the bot displays responses:
+
+```toml
+stream_mode = "partial"  # Edit messages as tokens arrive
+stream_mode = "off"      # Send complete response once (default)
+```
+
+With `partial` mode:
+- Bot sends initial message
+- Edits message as tokens stream in
+- Throttled by `draft_update_interval_ms` (default: 1000ms)
+
+### Acknowledgment Reactions
+
+When `ack_enabled = true` (default), the bot reacts to incoming messages with a random emoji:
+
+- ⚡️ (lightning)
+- 👌 (ok hand)
+- 👀 (eyes)
+- 🔥 (fire)
+- 👍 (thumbs up)
+
+Disable with:
+
+```toml
+ack_enabled = false
+```
+
+### Group Chat Control
+
+#### Reply to All Messages
+
+```toml
+[channels_config.telegram.group_reply]
+mode = "all_messages"
+```
+
+The bot responds to every message in groups (subject to allowlist).
+
+#### Mention-Only Mode
+
+```toml
+[channels_config.telegram.group_reply]
+mode = "mention_only"
+```
+
+The bot only responds when:
+- Explicitly mentioned: `@your_bot hello`
+- In a 1-on-1 direct message
+- Sender is in `allowed_sender_ids`
+
+#### VIP Senders
+
+```toml
+[channels_config.telegram.group_reply]
+mode = "mention_only"
+allowed_sender_ids = ["123456789", "*"]
+```
+
+These sender IDs bypass mention gating in groups.
+
+### Interruption Control
+
+Prevent stale responses when users send multiple messages:
+
+```toml
+interrupt_on_new_message = true
+```
+
+Behavior:
+- Cancels in-flight generation when a new message arrives
+- **Same sender + same chat only**
+- Preserves interrupted turn in conversation history
+- Restarts generation on newest message
+
+### Attachment Support
+
+#### Incoming Attachments
+
+The bot automatically downloads and processes:
+
+**Images** (converted to `[IMAGE:/path]` markers):
+- PNG, JPG, JPEG, GIF, WebP, BMP
+- Up to 20 MB (Telegram API limit)
+- Saved to `telegram_files/` in workspace
+
+**Documents**:
+- Saved to `telegram_files/`
+- Marked as `[Document: name] /path`
+
+**Voice Messages**:
+- OGG/Opus audio
+- Transcribed if transcription is enabled
+- Otherwise treated as audio file
+
+#### Outgoing Attachments
+
+Send attachments by using markers in your message:
+
+```
+[IMAGE:/workspace/diagram.png]
+[DOCUMENT:/workspace/report.pdf]
+[VIDEO:/workspace/demo.mp4]
+[AUDIO:/workspace/song.mp3]
+```
+
+Supported markers:
+- `[IMAGE:path]` - Send as image
+- `[PHOTO:path]` - Alias for IMAGE
+- `[DOCUMENT:path]` - Send as document/file
+- `[FILE:path]` - Alias for DOCUMENT
+- `[VIDEO:path]` - Send as video
+- `[AUDIO:path]` - Send as audio
+- `[VOICE:path]` - Send as voice message
+
+Paths are resolved:
+- Absolute paths: `/full/path/to/file`
+- Workspace-relative: `file.txt` → `/workspace/file.txt`
+- Explicit workspace: `/workspace/subdir/file.txt`
+
+Security:
+- All paths must be within the configured workspace
+- Directory traversal (`../`) is blocked
+- Symlinks are validated
+
+### Voice Transcription
+
+Enable voice message transcription:
+
+```toml
+[transcription]
+enabled = true
+provider = "openai"  # or "deepgram"
+model = "whisper-1"
+```
+
+Behavior:
+- Voice messages are downloaded
+- Audio is sent to transcription provider
+- Transcript is injected into message content
+- Original audio is preserved in workspace
+
+### Thread Support
+
+Telegram group threads are supported:
+
+- Incoming `thread_ts` is extracted from `message_thread_id`
+- Replies are sent to the same thread
+- Format: `chat_id:thread_id`
+
+### Tool Approval Prompts
+
+When supervised tools require approval:
+
+```
+Approval required for tool `shell`.
+Request ID: `abc-123-def`
+Args: `{"command": "ls -la"}`
+
+[Approve] [Deny]
+```
+
+Buttons trigger callback queries that send:
+- `/approve-allow abc-123-def`
+- `/approve-deny abc-123-def`
+
+## Implementation Details
+
+### Source Location
+
+`src/channels/telegram.rs` (1600+ lines)
+
+### Key Components
+
+#### TelegramChannel Struct
+
+```rust
+pub struct TelegramChannel {
+    bot_token: String,
+    allowed_users: Arc<RwLock<Vec<String>>>,
+    pairing: Option<PairingGuard>,
+    stream_mode: StreamMode,
+    mention_only: bool,
+    workspace_dir: Option<PathBuf>,
+    ack_enabled: bool,
+    // ...
+}
+```
+
+#### Polling Loop
+
+The channel uses long-polling with:
+
+- **Method**: `getUpdates` with offset tracking
+- **Timeout**: 30 seconds per request
+- **Error Handling**: Exponential backoff on failures
+- **Conflict Detection**: HTTP 409 indicates duplicate bot instance
+
+#### Message Processing
+
+1. Poll `getUpdates` endpoint
+2. Filter by allowlist (username or user ID)
+3. Check mention requirements (if in groups)
+4. Handle special commands (`/bind`, `/new`, `/model`, etc.)
+5. Download attachments if present
+6. Convert to `ChannelMessage`
+7. Send to agent
+
+### API Endpoints Used
+
+| Method | Purpose |
+|--------|--------|
+| `getUpdates` | Poll for new messages |
+| `sendMessage` | Send text messages |
+| `editMessageText` | Edit messages (streaming) |
+| `setMessageReaction` | Add emoji reactions |
+| `getFile` | Get file path for download |
+| `sendDocument` | Send document attachments |
+| `sendPhoto` | Send images |
+| `sendVideo` | Send videos |
+| `sendAudio` | Send audio files |
+| `sendVoice` | Send voice messages |
+| `getMe` | Get bot username/ID |
+| `setMyCommands` | Register bot commands |
+
+### Custom API Base URL
+
+For local Bot API servers or testing:
+
+```rust
+channel.with_api_base("https://custom-api.example.com".into())
+```
+
+Default: `https://api.telegram.org`
+
+## Error Handling
+
+### Common Errors
+
+**Polling Conflict (409)**:
+```
+Telegram polling conflict (409): another bot instance is active
+```
+Cause: Multiple instances using the same bot token
+Solution: Stop other instances or use different tokens
+
+**Unauthorized (401)**:
+```
+Telegram poll error: 401 Unauthorized
+```
+Cause: Invalid or revoked bot token
+Solution: Regenerate token via BotFather
+
+**Rate Limit (429)**:
+```
+Telegram: rate limit hit, retrying after 30s
+```
+Cause: Too many requests
+Solution: Automatic backoff applied
+
+**Attachment Too Large**:
+```
+Telegram attachment download failed: file size exceeds 20MB limit
+```
+Cause: Telegram API file size limit
+Solution: Use smaller files or external hosting
+
+### Error Sanitization
+
+All Telegram API errors are sanitized to remove:
+- Bot tokens from URLs
+- Sensitive authentication headers
+- Internal implementation details
+
+Pattern: `/bot<token>/` → `/bot[REDACTED]/`
+
+## Runtime Commands
+
+Available in chat:
+
+- `/new` - Start new conversation
+- `/model` - Show/switch current model
+- `/models` - Show/switch provider
+- `/approve-allow <id>` - Approve tool execution
+- `/approve-deny <id>` - Deny tool execution
+- `/bind <code>` - Pair account (pairing mode only)
+
+## Best Practices
+
+1. **Secure Your Token**: Never commit bot tokens to version control
+2. **Use Allowlists**: Start with specific users, not `*`
+3. **Enable Pairing**: Let users self-service authorization
+4. **Group Mode**: Use `mention_only` in public groups
+5. **Interruption**: Enable for responsive multi-message handling
+6. **ACK Reactions**: Keep enabled for user feedback
+
+## Troubleshooting
+
+### Bot Doesn't Respond
+
+**Check Allowlist**:
+```toml
+allowed_users = ["your_username"]  # without @
+```
+
+**Check Logs**:
+```bash
+RUST_LOG=info zeroclaw daemon 2>&1 | grep Telegram
+```
+
+Look for:
+- `Telegram: ignoring message from unauthorized user:`
+- `Telegram polling conflict (409):`
+- `Telegram poll error:`
+
+**Verify Bot Token**:
+```bash
+curl https://api.telegram.org/bot<TOKEN>/getMe
+```
+
+### Group Chat Not Working
+
+**Bot Not Added**:
+- Add bot to the group
+- Grant admin rights if needed
+
+**Mention Required**:
+```toml
+[channels_config.telegram.group_reply]
+mode = "all_messages"  # Not mention_only
+```
+
+**Allowlist Mismatch**:
+- User ID and username both work
+- Check sender identity in logs
+
+### Attachments Not Working
+
+**Workspace Not Configured**:
+Ensure workspace directory exists and is writable
+
+**Path Escapes Workspace**:
+All attachment paths must be inside configured workspace
+
+**File Size Limit**:
+Telegram enforces 20 MB download limit via Bot API
+
+## Performance
+
+### Message Throughput
+
+- **Polling Interval**: 30 seconds (long-polling timeout)
+- **Batch Size**: Up to 100 updates per poll
+- **Concurrent Processing**: One message at a time per sender
+
+### Optimization Tips
+
+1. **Streaming**: Use `partial` mode for long responses
+2. **Edit Throttle**: Increase `draft_update_interval_ms` to reduce API calls
+3. **ACK Reactions**: Disable if not needed
+4. **Attachment Download**: Lazy - only when received
+
+## Security
+
+### Token Protection
+
+- Tokens are redacted from logs
+- Never exposed in error messages
+- Stored in config file (protect with file permissions)
+
+### User Verification
+
+- Allowlist is checked before any processing
+- Pairing codes expire after failed attempts
+- Bind commands have rate limiting
+
+### Workspace Sandboxing
+
+- All file paths validated against workspace root
+- Directory traversal blocked
+- Symlink targets validated
+- Non-workspace paths rejected
+
+## See Also
+
+- [Channels Reference](/docs/channels-reference)
+- [Telegram Bot API](https://core.telegram.org/bots/api)
+- [Pairing Security](/security/pairing)
+- [Tool Approval](/features/tool-approval)

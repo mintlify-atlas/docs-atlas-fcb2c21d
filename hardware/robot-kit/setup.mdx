@@ -1,0 +1,485 @@
+---
+title: Robot Kit Setup
+description: Complete hardware and software setup for ZeroClaw robots
+---
+
+# Robot Kit Setup
+
+Complete guide to building a ZeroClaw-powered robot on Raspberry Pi 5.
+
+## Prerequisites
+
+- Raspberry Pi 5 (8GB recommended) or Pi 4 (4GB+)
+- All hardware components (see [Overview](/hardware/robot-kit/overview#hardware-requirements))
+- Basic soldering and wiring skills
+- ~2-3 hours for full setup
+
+## Phase 1: Base Operating System
+
+### 1. Flash Raspberry Pi OS
+
+Use Raspberry Pi Imager:
+
+```bash
+# Download from https://www.raspberrypi.com/software/
+
+# Configure:
+# - OS: Raspberry Pi OS (64-bit, Bookworm)
+# - Storage: Your SD card or NVMe
+# - Settings (gear icon):
+#   - Enable SSH
+#   - Set hostname: robot
+#   - Set username/password
+#   - Configure WiFi
+```
+
+### 2. Update System
+
+```bash
+ssh pi@robot.local
+
+sudo apt update && sudo apt upgrade -y
+
+# Install build essentials
+sudo apt install -y \
+    build-essential \
+    git \
+    curl \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libasound2-dev \
+    libclang-dev \
+    ffmpeg \
+    fswebcam
+```
+
+### 3. Install Rust
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+rustc --version
+```
+
+## Phase 2: AI Software Stack
+
+### 1. Install Ollama (Local LLM)
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Start service
+sudo systemctl enable ollama
+sudo systemctl start ollama
+
+# Pull models (choose based on RAM)
+# For 8GB Pi:
+ollama pull llama3.2:3b      # 3B params, fast
+ollama pull moondream        # Vision model, small
+
+# For 4GB Pi:
+ollama pull phi3:mini        # 3.8B, very fast
+ollama pull moondream        # Vision
+
+# Test
+curl http://localhost:11434/api/tags
+```
+
+### 2. Install Whisper.cpp (Speech-to-Text)
+
+```bash
+# Clone and build
+git clone https://github.com/ggerganov/whisper.cpp
+cd whisper.cpp
+make -j4
+
+# Download model
+bash ./models/download-ggml-model.sh base
+
+# Install
+sudo cp main /usr/local/bin/whisper-cpp
+mkdir -p ~/.zeroclaw/models
+cp models/ggml-base.bin ~/.zeroclaw/models/
+
+# Test
+echo "Testing microphone" | espeak -w /tmp/test.wav
+whisper-cpp -m ~/.zeroclaw/models/ggml-base.bin -f /tmp/test.wav
+```
+
+### 3. Install Piper TTS (Text-to-Speech)
+
+```bash
+# Download Piper binary
+wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_arm64.tar.gz
+tar -xzf piper_arm64.tar.gz
+sudo cp piper/piper /usr/local/bin/
+
+# Download voice model
+mkdir -p ~/.zeroclaw/models/piper
+cd ~/.zeroclaw/models/piper
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+
+# Test
+echo "Hello, I am your robot!" | piper --model ~/.zeroclaw/models/piper/en_US-lessac-medium.onnx --output_file test.wav
+aplay test.wav
+```
+
+### 4. Install RPLidar SDK
+
+```bash
+# Python driver
+pip3 install rplidar-roboticia
+
+# Add user to dialout group for serial access
+sudo usermod -aG dialout $USER
+# Logout and login for group change to take effect
+```
+
+## Phase 3: Hardware Wiring
+
+### Wiring Diagram
+
+```
+                     ┌─────────────────────────────────────┐
+                     │          Raspberry Pi 5             │
+                     │                                     │
+   ┌─────────────────┤ GPIO 4  ←── E-Stop Button (NC)      │
+   │                 │ GPIO 5  ←── Bump Sensor Left        │
+   │                 │ GPIO 6  ←── Bump Sensor Right       │
+   │                 │ GPIO 12 ──► Motor PWM 1             │
+   │                 │ GPIO 13 ──► Motor PWM 2             │
+   │                 │ GPIO 17 ←── PIR Motion 1            │
+   │                 │ GPIO 18 ──► LED Matrix (WS2812)     │
+   │                 │ GPIO 23 ──► Ultrasonic Trigger      │
+   │                 │ GPIO 24 ←── Ultrasonic Echo         │
+   │                 │ GPIO 27 ←── PIR Motion 2            │
+   │                 │                                     │
+   │ ┌───────────────┤ USB-A   ←── RPLidar A1              │
+   │ │               │ USB-A   ←── USB Microphone          │
+   │ │               │ USB-A   ←── USB Webcam              │
+   │ │               │ 3.5mm   ─► Speaker/Amp             │
+   │ │               └─────────────────────────────────────┘
+   │ │
+   │ └────── RPLidar A1 (USB)
+   │
+   │    ┌──────────────────┐      ┌─────────────┐
+   └────┤  Motor Controller├──────┤  4× Motors  │
+        │  (L298N/TB6612)  │      │ Omni Wheels │
+        └──────────────────┘      └─────────────┘
+```
+
+### Pin Assignments (BCM Numbering)
+
+| Function | GPIO Pin | Device |
+|----------|----------|--------|
+| E-Stop | 4 | Red mushroom button (normally closed) |
+| Bump Left | 5 | Microswitch |
+| Bump Right | 6 | Microswitch |
+| Motor PWM 1 | 12 | L298N ENA |
+| Motor PWM 2 | 13 | L298N ENB |
+| PIR Motion 1 | 17 | PIR sensor |
+| LED Matrix | 18 | WS2812B data pin |
+| Ultrasonic Trig | 23 | HC-SR04 trigger |
+| Ultrasonic Echo | 24 | HC-SR04 echo |
+| PIR Motion 2 | 27 | PIR sensor |
+
+### E-Stop Wiring (Critical)
+
+```
+E-Stop Button (NC)      Raspberry Pi
+──────────────────      ────────────
+NO (not used)
+COM ─────────────────────────► GPIO 4
+NC ──────────────────────────► 3.3V
+
+Normal: Circuit closed, GPIO 4 reads HIGH
+Pressed: Circuit open, GPIO 4 reads LOW (STOP!)
+```
+
+## Phase 4: ZeroClaw Robot Kit Build
+
+### 1. Clone and Build
+
+```bash
+git clone https://github.com/zeroclaw-labs/zeroclaw
+cd zeroclaw
+
+# Build robot kit
+cargo build -p zeroclaw-robot-kit --release
+
+# Build main zeroclaw (optional)
+cargo build --release --features peripheral-rpi
+```
+
+### 2. Install Configuration
+
+```bash
+mkdir -p ~/.zeroclaw
+cp crates/robot-kit/robot.toml ~/.zeroclaw/
+cp crates/robot-kit/SOUL.md ~/.zeroclaw/workspace/
+```
+
+### 3. Configure robot.toml
+
+Edit `~/.zeroclaw/robot.toml` for your hardware:
+
+```toml
+# Drive system
+[drive]
+backend = "serial"  # "ros2", "serial", "gpio", or "mock"
+serial_port = "/dev/ttyACM0"  # Arduino motor controller
+max_speed = 0.3     # Start conservative!
+max_rotation = 0.5
+
+# Camera
+[camera]
+device = "/dev/video0"  # USB webcam or Pi Camera
+width = 640
+height = 480
+vision_model = "moondream"
+ollama_url = "http://localhost:11434"
+
+# Audio
+[audio]
+mic_device = "plughw:1,0"      # Find with: arecord -l
+speaker_device = "plughw:0,0"  # Find with: aplay -l
+whisper_model = "base"
+whisper_path = "/usr/local/bin/whisper-cpp"
+piper_path = "/usr/local/bin/piper"
+piper_voice = "en_US-lessac-medium"
+
+# Sensors
+[sensors]
+lidar_port = "/dev/ttyUSB0"  # RPLidar
+lidar_type = "rplidar"
+motion_pins = [17, 27]
+ultrasonic_pins = [23, 24]
+
+# Safety (CRITICAL!)
+[safety]
+min_obstacle_distance = 0.3    # 30cm minimum
+slow_zone_multiplier = 3.0     # Slow at 90cm
+approach_speed_limit = 0.3     # 30% near obstacles
+max_drive_duration = 30        # Auto-stop after 30s
+estop_pin = 4
+bump_sensor_pins = [5, 6]
+bump_reverse_distance = 0.15
+confirm_movement = false       # Set true for extra safety
+predict_collisions = true
+sensor_timeout_secs = 5
+blind_mode_speed_limit = 0.2
+```
+
+## Phase 5: Component Testing
+
+### Test LIDAR
+
+```bash
+python3 << 'EOF'
+from rplidar import RPLidar
+lidar = RPLidar('/dev/ttyUSB0')
+for scan in lidar.iter_scans():
+    print(f'Got {len(scan)} points')
+    break
+lidar.stop()
+lidar.disconnect()
+EOF
+```
+
+### Test Camera
+
+```bash
+ffmpeg -f v4l2 -video_size 640x480 -i /dev/video0 -frames:v 1 test.jpg
+xdg-open test.jpg  # View on desktop
+```
+
+### Test Microphone
+
+```bash
+arecord -D plughw:1,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
+aplay test.wav
+```
+
+### Test Speaker
+
+```bash
+echo "Testing speaker" | piper --model ~/.zeroclaw/models/piper/en_US-lessac-medium.onnx --output_file - | aplay
+```
+
+### Test Ollama
+
+```bash
+curl http://localhost:11434/api/generate -d '{"model":"llama3.2:3b","prompt":"Say hello"}'
+```
+
+## Phase 6: Robot Startup
+
+### Manual Start
+
+```bash
+cd ~/zeroclaw
+
+# Start Ollama (if not running)
+ollama serve &
+
+# Test in mock mode (no hardware)
+export MOCK_MODE=true
+./target/release/zeroclaw agent -m "Say hello and show a happy face"
+
+# Test with real hardware (robot on blocks!)
+unset MOCK_MODE
+./target/release/zeroclaw agent -m "Move forward 0.5 meters"
+```
+
+### Automatic Startup Script
+
+Create `~/start_robot.sh`:
+
+```bash
+#!/bin/bash
+set -e
+
+echo "Starting robot..."
+
+# Start Ollama
+if ! pgrep -x "ollama" > /dev/null; then
+    ollama serve &
+    sleep 5
+fi
+
+# Start sensor loop (optional background task)
+if [ -f ~/sensor_loop.py ]; then
+    python3 ~/sensor_loop.py &
+    SENSOR_PID=$!
+fi
+
+# Start zeroclaw
+cd ~/zeroclaw
+./target/release/zeroclaw daemon
+```
+
+```bash
+chmod +x ~/start_robot.sh
+```
+
+### Systemd Service (Auto-start on Boot)
+
+Create `/etc/systemd/system/zeroclaw-robot.service`:
+
+```ini
+[Unit]
+Description=ZeroClaw Robot
+After=network.target ollama.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/zeroclaw
+ExecStart=/home/pi/start_robot.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable zeroclaw-robot
+sudo systemctl start zeroclaw-robot
+
+# Check status
+sudo systemctl status zeroclaw-robot
+journalctl -u zeroclaw-robot -f
+```
+
+## Phase 7: Personality Customization
+
+Edit `~/.zeroclaw/workspace/SOUL.md` to customize the robot's personality:
+
+```markdown
+# Buddy the Robot
+
+You are Buddy, a friendly robot companion!
+
+## Personality
+- Playful
+- Patient
+- Safe
+- Curious
+
+## Safety Rules (NEVER BREAK)
+1. Never move faster than walking speed
+2. Always stop if asked
+3. Keep 1 meter distance
+4. Never go near stairs or pools
+5. Alert adults if child hurt
+
+## Games
+1. Hide and Seek
+2. Follow the Leader
+3. Simon Says
+...
+```
+
+## Safety Checklist
+
+Before first run with real motors:
+
+- [ ] E-stop button wired and tested
+- [ ] Bump sensors wired and tested
+- [ ] LIDAR spinning and returning data
+- [ ] `max_speed` set to 0.3 or lower
+- [ ] Robot on blocks (wheels not touching ground)
+- [ ] First test with `backend = "mock"` in config
+- [ ] Adult supervision ready
+- [ ] Clear space around robot (3+ meters)
+- [ ] Emergency stop response time < 1 second
+
+## Troubleshooting
+
+See detailed troubleshooting in:
+- [Raspberry Pi Setup](/hardware/peripherals/raspberry-pi#troubleshooting)
+- [Robot Kit API](/hardware/robot-kit/api#troubleshooting)
+
+### Common Issues
+
+**LIDAR not detected:**
+```bash
+ls -la /dev/ttyUSB*
+dmesg | grep -i usb
+```
+
+**Ollama slow:**
+```bash
+# Use smaller model
+ollama rm llama3.2:3b
+ollama pull phi3:mini
+```
+
+**Motors not responding:**
+```bash
+# Check serial
+ls /dev/ttyACM*
+screen /dev/ttyACM0 115200
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="code" href="/hardware/robot-kit/api">
+    Tool specifications and usage
+  </Card>
+  <Card title="Overview" icon="robot" href="/hardware/robot-kit/overview">
+    Architecture and features
+  </Card>
+  <Card title="Raspberry Pi" icon="raspberry-pi" href="/hardware/peripherals/raspberry-pi">
+    GPIO and Pi-specific setup
+  </Card>
+  <Card title="Examples" icon="book" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/crates/robot-kit/examples">
+    Example robot programs
+  </Card>
+</CardGroup>

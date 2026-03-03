@@ -1,80 +1,399 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start Guide
+description: Get your first ZeroClaw agent running in under 5 minutes
 ---
 
-## Get started in three steps
+# Quick Start
 
-Get your documentation site running locally and make your first customization.
+Get ZeroClaw installed and running your first AI agent in minutes.
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+## Prerequisites
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  You'll need an API key from one of the supported providers. We recommend **OpenRouter** for quick starts (supports 200+ models with a single key).
+  
+  Get one at [openrouter.ai/keys](https://openrouter.ai/keys) — free tier available.
+</Note>
+
+## Installation
+
+Choose your preferred installation method:
+
+<Tabs>
+  <Tab title="Homebrew (macOS/Linux)">
+    ```bash
+    brew install zeroclaw
+    ```
+    
+    <Tip>Fastest method for macOS and Linuxbrew users. Pre-built binaries, no compilation needed.</Tip>
+  </Tab>
+  
+  <Tab title="Clone + Bootstrap">
+    ```bash
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh
+    ```
+    
+    <Info>
+      This method builds from source. Requires:
+      - **2GB RAM** (+ swap recommended)
+      - **6GB free disk space**
+      - Rust toolchain (installed automatically with `--install-rust`)
+    </Info>
+  </Tab>
+  
+  <Tab title="Cargo Install">
+    ```bash
+    cargo install zeroclaw
+    ```
+    
+    <Warning>Compiles from source via crates.io. Same resource requirements as bootstrap method.</Warning>
+  </Tab>
+  
+  <Tab title="Pre-built Binary">
+    For low-resource systems (Raspberry Pi, embedded):
+    
+    ```bash
+    git clone https://github.com/zeroclaw-labs/zeroclaw.git
+    cd zeroclaw
+    ./bootstrap.sh --prefer-prebuilt
+    ```
+    
+    Downloads the latest release binary for your platform. Falls back to source build if no match found.
+    
+    <Tip>Use `--prebuilt-only` to fail instead of falling back to source builds.</Tip>
+  </Tab>
+</Tabs>
+
+## First-Time Setup
+
+Run the onboarding wizard to configure your agent:
+
+```bash
+zeroclaw onboard
+```
+
+You'll be prompted for:
+
+<Steps>
+  <Step title="Provider Selection">
+    Choose your AI provider (default: `openrouter`)
+    
+    Popular options:
+    - `openrouter` — Multi-provider gateway (200+ models)
+    - `anthropic` — Claude models
+    - `openai` — GPT-4, GPT-5
+    - `ollama` — Local models
+  </Step>
+  
+  <Step title="API Key">
+    Enter your API key (securely encrypted at rest using ChaCha20-Poly1305)
+    
+    ```bash
+    # Environment variable (temporary)
+    export API_KEY="sk-or-v1-..."
+    zeroclaw onboard
+    
+    # Or provide inline (non-interactive)
+    zeroclaw onboard --api-key "sk-or-v1-..." --provider openrouter
+    ```
+  </Step>
+  
+  <Step title="Model Selection">
+    Pick a default model (optional — smart defaults provided)
+    
+    Examples:
+    - `anthropic/claude-sonnet-4.6` (default for OpenRouter)
+    - `gpt-5.2` (OpenAI)
+    - `llama3.2` (Ollama)
+  </Step>
+  
+  <Step title="Memory Backend">
+    Choose how to store conversation history:
+    
+    - **sqlite** (default) — Embedded, zero-config
+    - **markdown** — Human-readable, git-friendly
+    - **postgres** — Distributed, multi-instance
+    - **lucid** — High-performance vector search
+    - **none** — Stateless mode
+  </Step>
+  
+  <Step title="OTP Pairing (Recommended)">
+    Enable gateway authentication with time-based OTP?
+    
+    **Recommended for security.** Prevents unauthorized API access.
+    
+    Skip with `--no-totp` if testing locally behind a firewall.
+  </Step>
+</Steps>
+
+<Tip>
+  **Skip the wizard?** Use non-interactive mode:
+  
+  ```bash
+  zeroclaw onboard \
+    --api-key "$API_KEY" \
+    --provider openrouter \
+    --model "anthropic/claude-sonnet-4.6" \
+    --memory sqlite
+  ```
+</Tip>
+
+## Start Your Agent
+
+### Option 1: Interactive Chat
+
+Direct command-line chat session:
+
+```bash
+zeroclaw chat "Hello! What can you help me with?"
+```
+
+For multi-turn conversations, start the agent loop:
+
+```bash
+zeroclaw agent
+```
+
+Type your messages and press Enter. The agent can:
+- Execute shell commands (with approval)
+- Read and write files in your workspace
+- Search the web
+- Call custom tools
+
+<Warning>
+  By default, all tool executions require user approval. Configure autonomy levels in `config.toml` to adjust this behavior.
+</Warning>
+
+### Option 2: Gateway + Dashboard
+
+Start the HTTP gateway server with web UI:
+
+```bash
+zeroclaw gateway
+```
+
+By default, the gateway listens on `http://127.0.0.1:3000/`
+
+<Steps>
+  <Step title="Access Dashboard">
+    Open the URL shown in startup logs (usually `http://127.0.0.1:3000/`)
+  </Step>
+  
+  <Step title="Pair Device (if OTP enabled)">
+    Enter the 6-digit TOTP code from your authenticator app
+  </Step>
+  
+  <Step title="Send Messages">
+    Use the web UI or POST to `/api/chat`:
+    
+    ```bash
+    curl -X POST http://127.0.0.1:3000/api/chat \
+      -H "Content-Type: application/json" \
+      -d '{"message": "List files in current directory"}'
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  The gateway supports **Server-Sent Events (SSE)** for streaming responses. Connect via `/api/stream` for real-time output.
+</Info>
+
+### Option 3: Channel Integration
+
+Connect to communication platforms:
+
+<CodeGroup>
+  ```bash Telegram
+  zeroclaw channel setup telegram
+  # Follow prompts to enter bot token
+  
+  zeroclaw channel run telegram
+  ```
+  
+  ```bash Discord
+  zeroclaw channel setup discord
+  # Enter bot token and configure server/channel
+  
+  zeroclaw channel run discord
+  ```
+  
+  ```bash Slack
+  zeroclaw channel setup slack
+  # Provide OAuth token and workspace details
+  
+  zeroclaw channel run slack
+  ```
+  
+  ```bash Matrix (E2EE)
+  zeroclaw channel setup matrix
+  # Configure homeserver, username, password
+  # Optionally enable end-to-end encryption
+  
+  zeroclaw channel run matrix
+  ```
+</CodeGroup>
+
+<Tip>
+  Run multiple channels simultaneously with the daemon mode:
+  
+  ```bash
+  zeroclaw service start
+  ```
+  
+  This starts all configured channels in the background.
+</Tip>
+
+## Example Workflows
+
+### 1. File Operations
+
+```bash
+zeroclaw chat "Create a README.md with project description"
+zeroclaw chat "Search for TODO comments in src/ directory"
+zeroclaw chat "Count lines of Rust code in this project"
+```
+
+### 2. Web Research
+
+```bash
+zeroclaw chat "Search for latest Rust async best practices"
+zeroclaw chat "Fetch and summarize https://blog.rust-lang.org/"
+```
+
+### 3. Code Analysis
+
+```bash
+zeroclaw chat "Analyze the architecture of src/agent/mod.rs"
+zeroclaw chat "Suggest performance improvements for this codebase"
+```
+
+### 4. System Administration
+
+```bash
+zeroclaw chat "Check disk usage and clean up logs older than 30 days"
+zeroclaw chat "Monitor CPU temperature and alert if over 80°C"
+```
+
+<Warning>
+  Shell commands execute with your user permissions. Review approval prompts carefully before accepting destructive operations.
+</Warning>
+
+## Configuration Files
+
+After onboarding, you'll find:
+
+```bash
+~/.zeroclaw/
+├── config.toml          # Main configuration
+├── .secret_key          # Encryption key (DO NOT COMMIT)
+├── workspace/           # Agent workspace directory
+└── memory/              # Conversation history (sqlite/markdown)
+```
+
+### Quick Config Edits
+
+```toml
+# ~/.zeroclaw/config.toml
+
+# Change default model
+default_model = "anthropic/claude-sonnet-4.6"
+default_temperature = 0.7
+
+# Adjust autonomy (approve, auto, supervised)
+[autonomy]
+level = "approve"  # Require approval for all tools
+file_operations = "auto"  # Auto-approve file reads
+shell_commands = "approve"  # Always ask for shell commands
+
+# Configure gateway
+[gateway]
+host = "127.0.0.1"
+port = 3000
+pairing_required = true
+```
+
+See [Configuration Guide](/configuration) for full reference.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation Details" icon="download" href="/installation">
+    Platform-specific instructions, Docker setup, hardware builds
+  </Card>
+  
+  <Card title="Configuration Guide" icon="gear" href="/configuration">
+    Deep dive into config.toml, environment variables, advanced settings
+  </Card>
+  
+  <Card title="Tool Reference" icon="wrench" href="/tools-reference">
+    Built-in tools, custom tool creation, WASM plugins
+  </Card>
+  
+  <Card title="Channel Setup" icon="comments" href="/channels-reference">
+    Configure Telegram, Discord, Slack, Matrix, and more
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found: zeroclaw">
+    Ensure `~/.cargo/bin` is in your PATH:
+    
+    ```bash
+    export PATH="$HOME/.cargo/bin:$PATH"
+    
+    # Add to ~/.bashrc or ~/.zshrc to persist
+    echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+    ```
+  </Accordion>
+  
+  <Accordion title="Build fails with 'out of memory'">
+    Source builds need ~2GB RAM. Solutions:
+    
+    1. Use pre-built binaries: `./bootstrap.sh --prefer-prebuilt`
+    2. Enable swap space:
+       ```bash
+       sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+       sudo mkswap /swapfile
+       sudo swapon /swapfile
+       ```
+    3. Reduce parallelism: `CARGO_BUILD_JOBS=1 ./bootstrap.sh`
+  </Accordion>
+  
+  <Accordion title="Provider returns 401 Unauthorized">
+    Check your API key:
+    
+    ```bash
+    # Re-run onboarding
+    zeroclaw onboard --force
+    
+    # Or edit config directly
+    nano ~/.zeroclaw/config.toml
+    ```
+    
+    Verify the key is valid at your provider's dashboard.
+  </Accordion>
+  
+  <Accordion title="Gateway won't start (port in use)">
+    Another service is using port 3000:
+    
+    ```bash
+    # Find the process
+    lsof -i :3000
+    
+    # Change ZeroClaw port
+    zeroclaw gateway --port 3001
+    
+    # Or edit config
+    # [gateway]
+    # port = 3001
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  For more troubleshooting, see the [Troubleshooting Guide](https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/troubleshooting.md) in the repository.
 </Note>

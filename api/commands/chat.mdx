@@ -1,0 +1,231 @@
+---
+title: zeroclaw agent
+description: Start the AI agent loop with interactive chat or single-shot mode
+---
+
+## Overview
+
+The `zeroclaw agent` command launches an interactive chat session with your configured AI provider. It supports both interactive REPL mode and single-shot message execution.
+
+## Basic Usage
+
+```bash
+# Start interactive session
+zeroclaw agent
+
+# Single message mode
+zeroclaw agent -m "Summarize today's logs"
+```
+
+## Command Syntax
+
+```bash
+zeroclaw agent [OPTIONS]
+```
+
+## Options
+
+### Core Options
+
+<ParamField path="-m, --message" type="string">
+  Single message mode (don't enter interactive mode). Send one message and exit.
+</ParamField>
+
+<ParamField path="-p, --provider" type="string">
+  Provider to use (openrouter, anthropic, openai, openai-codex, gemini, etc.). Overrides config default.
+</ParamField>
+
+<ParamField path="--model" type="string">
+  Model to use. Overrides config default.
+</ParamField>
+
+<ParamField path="-t, --temperature" type="float" default="0.7">
+  Temperature (0.0 - 2.0). Controls response randomness.
+</ParamField>
+
+### Hardware Options
+
+<ParamField path="--peripheral" type="string[]">
+  Attach a peripheral board. Format: `board:path`
+  
+  Example: `nucleo-f401re:/dev/ttyACM0`
+</ParamField>
+
+### Security & Autonomy
+
+<ParamField path="--autonomy-level" type="enum">
+  Autonomy level for agent execution.
+  
+  **Options:**
+  - `read_only` - Agent can only read, no modifications
+  - `supervised` - Agent requires approval for actions
+  - `full` - Agent can execute actions autonomously
+</ParamField>
+
+<ParamField path="--max-actions-per-hour" type="integer">
+  Maximum shell/tool actions per hour. Rate limiting for safety.
+</ParamField>
+
+### Agent Behavior
+
+<ParamField path="--max-tool-iterations" type="integer">
+  Maximum tool-call iterations per message. Prevents infinite loops.
+</ParamField>
+
+<ParamField path="--max-history-messages" type="integer">
+  Maximum conversation history messages to retain in context.
+</ParamField>
+
+<ParamField path="--compact-context" type="boolean">
+  Enable compact context mode (smaller prompts for limited models).
+</ParamField>
+
+### Memory Options
+
+<ParamField path="--memory-backend" type="enum">
+  Memory backend to use.
+  
+  **Options:**
+  - `sqlite` - SQLite-based persistent memory
+  - `markdown` - Markdown file-based memory
+  - `lucid` - Advanced vector memory backend
+  - `none` - Disable memory
+</ParamField>
+
+## Examples
+
+### Interactive Session
+
+```bash
+# Start with default config
+zeroclaw agent
+
+# Use specific provider and model
+zeroclaw agent -p anthropic --model claude-sonnet-4-20250514
+
+# With hardware peripheral
+zeroclaw agent --peripheral nucleo-f401re:/dev/ttyACM0
+```
+
+### Single Message Mode
+
+```bash
+# Quick one-off task
+zeroclaw agent -m "Summarize today's logs"
+
+# With custom settings
+zeroclaw agent -m "quick task" --memory-backend none --compact-context
+
+# With specific autonomy settings
+zeroclaw agent -m "deploy to prod" --autonomy-level supervised --max-actions-per-hour 100
+```
+
+### Advanced Usage
+
+```bash
+# Full autonomy with rate limits
+zeroclaw agent --autonomy-level full --max-actions-per-hour 100
+
+# Limited context for constrained models
+zeroclaw agent --compact-context --max-history-messages 10 --max-tool-iterations 5
+
+# Disable memory for ephemeral session
+zeroclaw agent --memory-backend none
+```
+
+## Interactive Mode
+
+When running without `--message`, the agent enters interactive mode with these features:
+
+- **Persistent conversation history** - Context maintained across messages
+- **Tool execution approval** - In supervised mode, prompts before actions
+- **Multi-turn interactions** - Follow-up questions and iterative refinement
+- **Session memory** - Conversation saved to configured memory backend
+
+### Interactive Commands
+
+```bash
+# In interactive mode:
+> Your message here
+
+# Exit the session
+> exit
+> quit
+> Ctrl+D
+```
+
+## Terminal Output
+
+### Interactive Session Example
+
+```bash
+$ zeroclaw agent
+🦀 ZeroClaw Agent v0.1.0
+Provider: anthropic
+Model: claude-sonnet-4-20250514
+Memory: sqlite
+Autonomy: supervised
+
+> Summarize the README file
+
+🔧 Reading file: README.md
+
+📝 Summary:
+The README introduces ZeroClaw, a high-performance Rust-based
+autonomous agent runtime optimized for speed and efficiency...
+
+> exit
+Goodbye!
+```
+
+### Single Message Example
+
+```bash
+$ zeroclaw agent -m "What's the current time?"
+
+🤖 The current time is 15:42:30 UTC (Tuesday, March 3, 2026).
+
+$ _
+```
+
+## Configuration
+
+The agent respects these configuration settings from `config.toml`:
+
+```toml
+[agent]
+max_tool_iterations = 10
+max_history_messages = 50
+compact_context = false
+
+[autonomy]
+level = "supervised"
+max_actions_per_hour = 100
+workspace_only = true
+
+[memory]
+backend = "sqlite"
+auto_save = true
+```
+
+Command-line flags override config file settings for the current session only.
+
+## Exit Codes
+
+- `0` - Success
+- `1` - General error
+- `2` - Configuration error
+- `130` - Interrupted (Ctrl+C)
+
+## Related Commands
+
+- [`zeroclaw config`](/api/commands/config) - Manage configuration settings
+- [`zeroclaw gateway`](/api/commands/gateway) - Start webhook gateway for remote access
+- [`zeroclaw daemon`](/api/commands/daemon) - Run full autonomous runtime
+
+## See Also
+
+- [Agent Configuration Reference](/configuration#agent)
+- [Provider Reference](/api/providers)
+- [Tool Reference](/api/tools)
+- [Security Best Practices](/operations/security-best-practices)

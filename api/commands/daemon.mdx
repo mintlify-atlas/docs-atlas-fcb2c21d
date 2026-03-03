@@ -1,0 +1,418 @@
+---
+title: zeroclaw daemon
+description: Start the long-running autonomous daemon with gateway, channels, and scheduler
+---
+
+## Overview
+
+The `zeroclaw daemon` command launches the full ZeroClaw autonomous runtime. This is the recommended way to run ZeroClaw in production or as an always-on assistant.
+
+The daemon supervises and automatically restarts these components:
+
+- **Gateway server** - HTTP/WebSocket endpoint for webhooks and API access
+- **Channel listeners** - Telegram, Discord, Slack, WhatsApp, etc.
+- **Heartbeat monitor** - Health checks and status reporting
+- **Cron scheduler** - Scheduled task execution
+
+## Basic Usage
+
+```bash
+# Start with config defaults
+zeroclaw daemon
+
+# Custom port
+zeroclaw daemon -p 9090
+
+# Localhost only
+zeroclaw daemon --host 127.0.0.1
+```
+
+## Command Syntax
+
+```bash
+zeroclaw daemon [OPTIONS]
+```
+
+## Options
+
+<ParamField path="-p, --port" type="integer">
+  Port for gateway component to listen on. Use `0` for random available port. Defaults to `gateway.port` in config (typically 8585).
+</ParamField>
+
+<ParamField path="--host" type="string">
+  Host address for gateway to bind to. Defaults to `gateway.host` in config (typically 127.0.0.1).
+  
+  **Common values:**
+  - `127.0.0.1` - Localhost only (secure default)
+  - `0.0.0.0` - All interfaces (public access)
+  - Specific IP - Bind to specific network interface
+</ParamField>
+
+## Examples
+
+### Basic Daemon
+
+```bash
+# Use config defaults
+zeroclaw daemon
+
+# Custom port
+zeroclaw daemon -p 9090
+
+# Specific host
+zeroclaw daemon --host 0.0.0.0 -p 8585
+```
+
+### Production Setup
+
+```bash
+# Run as systemd service (recommended)
+zeroclaw service install
+zeroclaw service start
+
+# Or run directly
+zeroclaw daemon --host 127.0.0.1 -p 8585
+```
+
+## Terminal Output
+
+```bash
+$ zeroclaw daemon
+🧠 Starting ZeroClaw Daemon on 127.0.0.1:8585
+
+✓ Health monitor initialized
+✓ Heartbeat engine started
+
+🚀 Starting gateway supervisor...
+   Gateway running on http://127.0.0.1:8585
+   🔐 Pairing Code: ABCD-1234-EFGH
+
+📡 Starting channel supervisors...
+   ✓ Telegram: @zeroclaw_bot
+   ✓ Discord: ZeroClaw#1234
+   ✓ Slack: zeroclaw-assistant
+
+⏰ Starting scheduler supervisor...
+   ✓ Cron scheduler running (3 tasks loaded)
+
+💓 Starting heartbeat monitor...
+   ✓ Heartbeat interval: 5 minutes
+
+✅ ZeroClaw daemon is running
+   Press Ctrl+C to stop
+```
+
+## Supervised Components
+
+### Gateway Supervisor
+
+The gateway supervisor:
+
+- Starts the HTTP/WebSocket gateway
+- Monitors for crashes and restarts automatically
+- Uses exponential backoff on repeated failures
+- Logs all restart events
+
+### Channel Supervisors
+
+Each configured channel gets a supervisor that:
+
+- Starts the channel listener (Telegram, Discord, etc.)
+- Reconnects on network failures
+- Handles rate limits and API errors gracefully
+- Maintains separate failure tracking per channel
+
+### Heartbeat Monitor
+
+When `heartbeat.enabled = true`:
+
+- Writes periodic status to `workspace/.heartbeat`
+- Tracks component health (gateway, channels, scheduler)
+- Enables external monitoring systems to detect failures
+
+### Cron Scheduler
+
+When `cron.enabled = true`:
+
+- Loads scheduled tasks from config
+- Executes tasks at specified intervals
+- Logs execution results
+- Handles task failures gracefully
+
+## Startup Behavior
+
+### Port Conflict Detection
+
+The daemon checks if the port is already in use before starting:
+
+```bash
+$ zeroclaw daemon
+✓ ZeroClaw daemon already running on http://127.0.0.1:8585
+  Use 'zeroclaw service restart' to restart, or 'zeroclaw status' to check health.
+```
+
+If the port is used by another process:
+
+```bash
+$ zeroclaw daemon
+❌ Port 8585 is already in use by another process.
+   Run 'lsof -i :8585' to identify it, or use a different port.
+```
+
+### Component Failure Handling
+
+- **Single component failure**: Other components continue running
+- **All components fail**: Daemon exits with error
+- **Repeated failures**: Exponential backoff (1s → 2s → 4s → ... → max)
+
+## Configuration
+
+Daemon settings in `config.toml`:
+
+```toml
+[gateway]
+host = "127.0.0.1"
+port = 8585
+
+[heartbeat]
+enabled = true
+interval_minutes = 5
+
+[cron]
+enabled = true
+
+[reliability]
+channel_initial_backoff_secs = 1
+channel_max_backoff_secs = 300
+
+# Channel configurations
+[channels.telegram]
+bot_token = "your-token"
+
+[channels.discord]
+bot_token = "your-token"
+```
+
+## Component Health Monitoring
+
+Check daemon health:
+
+```bash
+# Overall status
+zeroclaw status
+
+# Component health via gateway
+curl http://localhost:8585/health
+
+# Heartbeat file (when enabled)
+cat ~/.zeroclaw/workspace/.heartbeat
+```
+
+### Health Status Format
+
+```json
+{
+  "daemon": "ok",
+  "gateway": "ok",
+  "channels": "ok",
+  "scheduler": "ok",
+  "heartbeat": "ok",
+  "last_update": "2026-03-03T15:42:30Z"
+}
+```
+
+## Running as a Service
+
+### systemd (Linux)
+
+```bash
+# Install service
+zeroclaw service install
+
+# Start daemon
+sudo systemctl --user start zeroclaw
+
+# Enable on boot
+sudo systemctl --user enable zeroclaw
+
+# Check status
+sudo systemctl --user status zeroclaw
+
+# View logs
+journalctl --user -u zeroclaw -f
+```
+
+### launchd (macOS)
+
+```bash
+# Install service
+zeroclaw service install
+
+# Start daemon
+launchctl load ~/Library/LaunchAgents/ai.zeroclaw.plist
+
+# Check status
+launchctl list | grep zeroclaw
+
+# View logs
+tail -f ~/Library/Logs/zeroclaw.log
+```
+
+## Stopping the Daemon
+
+### Interactive Mode
+
+```bash
+# Press Ctrl+C
+^C
+🛑 Shutting down ZeroClaw daemon...
+✓ Gateway stopped
+✓ Channels stopped
+✓ Scheduler stopped
+✓ Heartbeat stopped
+
+👋 Daemon stopped gracefully
+```
+
+### Service Mode
+
+```bash
+# systemd
+sudo systemctl --user stop zeroclaw
+
+# launchd
+launchctl unload ~/Library/LaunchAgents/ai.zeroclaw.plist
+```
+
+## Restart Strategies
+
+### Graceful Restart
+
+```bash
+# systemd
+sudo systemctl --user restart zeroclaw
+
+# Or via service command
+zeroclaw service restart
+```
+
+### Force Restart (on hang)
+
+```bash
+# Find process
+ps aux | grep zeroclaw
+
+# Kill process
+kill -9 <pid>
+
+# Start again
+zeroclaw daemon
+```
+
+## Logs and Monitoring
+
+### Log Locations
+
+- **systemd**: `journalctl --user -u zeroclaw`
+- **launchd**: `~/Library/Logs/zeroclaw.log`
+- **Direct run**: stdout/stderr
+
+### Log Verbosity
+
+Control via `RUST_LOG` environment variable:
+
+```bash
+# Debug level (verbose)
+RUST_LOG=debug zeroclaw daemon
+
+# Info level (default)
+RUST_LOG=info zeroclaw daemon
+
+# Warn level (minimal)
+RUST_LOG=warn zeroclaw daemon
+```
+
+## Troubleshooting
+
+### Daemon Won't Start
+
+```bash
+# Check port availability
+lsof -i :8585
+
+# Check config validity
+zeroclaw config show
+
+# Check component status
+zeroclaw doctor
+```
+
+### Component Keeps Restarting
+
+```bash
+# Check logs for errors
+journalctl --user -u zeroclaw -n 100
+
+# Check specific component
+zeroclaw channel doctor    # For channel issues
+zeroclaw doctor            # General health check
+```
+
+### High Memory/CPU Usage
+
+```bash
+# Check resource usage
+top -p $(pgrep zeroclaw)
+
+# Review configuration
+zeroclaw config get agent.max_tool_iterations
+zeroclaw config get agent.max_history_messages
+
+# Adjust limits
+zeroclaw config set agent.max_history_messages 20
+```
+
+## Performance Tuning
+
+### Resource Limits
+
+```toml
+[agent]
+max_tool_iterations = 10
+max_history_messages = 50
+
+[autonomy]
+max_actions_per_hour = 100
+
+[gateway.rate_limit]
+max_requests_per_window = 60
+```
+
+### Backoff Configuration
+
+```toml
+[reliability]
+channel_initial_backoff_secs = 1
+channel_max_backoff_secs = 300
+```
+
+## Exit Codes
+
+- `0` - Success (daemon stopped gracefully)
+- `1` - Startup error (port in use, component failure)
+- `2` - Configuration error
+- `130` - Interrupted (Ctrl+C)
+
+## Related Commands
+
+- [`zeroclaw service`](/api/commands/service) - Manage daemon as system service
+- [`zeroclaw gateway`](/api/commands/gateway) - Run gateway component only
+- [`zeroclaw status`](/api/commands/status) - Check system status
+- [`zeroclaw config`](/api/commands/config) - Manage configuration
+
+## See Also
+
+- [Deployment Guide](/guides/deployment)
+- [Operations Runbook](/operations/running-agents)
+- [Monitoring](/operations/monitoring)
+- [Troubleshooting](/operations/troubleshooting)

@@ -1,0 +1,447 @@
+---
+title: Memory Trait
+description: Core trait for implementing persistent memory backends in ZeroClaw
+---
+
+The `Memory` trait defines the interface for all persistence backends in ZeroClaw. Implement this trait to integrate new storage systems like databases, vector stores, or custom memory solutions.
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait Memory: Send + Sync {
+    // Core methods
+    fn name(&self) -> &str;
+    async fn store(&self, key: &str, content: &str, category: MemoryCategory, session_id: Option<&str>) -> anyhow::Result<()>;
+    async fn recall(&self, query: &str, limit: usize, session_id: Option<&str>) -> anyhow::Result<Vec<MemoryEntry>>;
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
+    async fn list(&self, category: Option<&MemoryCategory>, session_id: Option<&str>) -> anyhow::Result<Vec<MemoryEntry>>;
+    async fn forget(&self, key: &str) -> anyhow::Result<bool>;
+    async fn count(&self) -> anyhow::Result<usize>;
+    async fn health_check(&self) -> bool;
+    
+    // Optional vector operations
+    async fn reindex(&self, progress_callback: Option<Box<dyn Fn(usize, usize) + Send + Sync>>) -> anyhow::Result<usize>;
+}
+```
+
+## Required Methods
+
+### `name`
+
+Return the backend name.
+
+<ResponseField name="name" type="&str">
+  Stable lowercase identifier (e.g., "sqlite", "markdown", "qdrant")
+</ResponseField>
+
+### `store`
+
+Store a memory entry.
+
+<ParamField path="key" type="&str" required>
+  Unique identifier for this memory entry
+</ParamField>
+
+<ParamField path="content" type="&str" required>
+  Memory content (text, JSON, or any string data)
+</ParamField>
+
+<ParamField path="category" type="MemoryCategory" required>
+  Memory category for organization:
+  - `MemoryCategory::Core` - Long-term facts, preferences, decisions
+  - `MemoryCategory::Daily` - Daily session logs
+  - `MemoryCategory::Conversation` - Conversation context
+  - `MemoryCategory::Custom(String)` - User-defined category
+</ParamField>
+
+<ParamField path="session_id" type="Option<&str>">
+  Optional session identifier to scope the memory
+</ParamField>
+
+<ResponseField name="Result" type="anyhow::Result<()>">
+  Success or error
+</ResponseField>
+
+### `recall`
+
+Recall memories matching a query (keyword or semantic search).
+
+<ParamField path="query" type="&str" required>
+  Search query string
+</ParamField>
+
+<ParamField path="limit" type="usize" required>
+  Maximum number of results to return
+</ParamField>
+
+<ParamField path="session_id" type="Option<&str>">
+  Optional session filter
+</ParamField>
+
+<ResponseField name="Vec<MemoryEntry>" type="Vec<MemoryEntry>">
+  Array of matching memory entries, ranked by relevance
+</ResponseField>
+
+### `get`
+
+Get a specific memory by key.
+
+<ParamField path="key" type="&str" required>
+  Memory key to retrieve
+</ParamField>
+
+<ResponseField name="Option<MemoryEntry>" type="anyhow::Result<Option<MemoryEntry>>">
+  Memory entry if found, or `None`
+</ResponseField>
+
+### `list`
+
+List all memory entries with optional filters.
+
+<ParamField path="category" type="Option<&MemoryCategory>">
+  Filter by category (all categories if `None`)
+</ParamField>
+
+<ParamField path="session_id" type="Option<&str>">
+  Filter by session (all sessions if `None`)
+</ParamField>
+
+<ResponseField name="Vec<MemoryEntry>" type="anyhow::Result<Vec<MemoryEntry>>">
+  Array of matching memory entries
+</ResponseField>
+
+### `forget`
+
+Remove a memory by key.
+
+<ParamField path="key" type="&str" required>
+  Memory key to remove
+</ParamField>
+
+<ResponseField name="deleted" type="anyhow::Result<bool>">
+  `true` if memory was deleted, `false` if not found
+</ResponseField>
+
+### `count`
+
+Count total memories.
+
+<ResponseField name="count" type="anyhow::Result<usize>">
+  Total number of memory entries
+</ResponseField>
+
+### `health_check`
+
+Check if the memory backend is healthy.
+
+<ResponseField name="healthy" type="bool">
+  `true` if backend is operational
+</ResponseField>
+
+## Optional Methods
+
+### `reindex`
+
+Rebuild embeddings for all memories using the current embedding provider.
+
+<ParamField path="progress_callback" type="Option<Box<dyn Fn(usize, usize) + Send + Sync>>">
+  Optional callback for progress updates: `(current, total)`
+</ParamField>
+
+<ResponseField name="count" type="anyhow::Result<usize>">
+  Number of memories reindexed
+</ResponseField>
+
+**Default:** Returns error "Reindex not supported".
+
+**Use case:** Call after changing embedding model to ensure vector search works correctly.
+
+## Types
+
+### `MemoryEntry`
+
+```rust
+pub struct MemoryEntry {
+    pub id: String,
+    pub key: String,
+    pub content: String,
+    pub category: MemoryCategory,
+    pub timestamp: String,
+    pub session_id: Option<String>,
+    pub score: Option<f64>,  // Relevance score for search results
+}
+```
+
+### `MemoryCategory`
+
+```rust
+pub enum MemoryCategory {
+    Core,                    // Long-term facts, preferences, decisions
+    Daily,                   // Daily session logs
+    Conversation,            // Conversation context
+    Custom(String),          // User-defined custom category
+}
+```
+
+**Display format:**
+- `Core` → `"core"`
+- `Daily` → `"daily"`
+- `Conversation` → `"conversation"`
+- `Custom("notes")` → `"notes"`
+
+**Serialization:** Uses snake_case (e.g., `"core"`, `"daily"`, `"conversation"`).
+
+## Implementation Example
+
+Here's a simplified in-memory backend:
+
+```rust
+use async_trait::async_trait;
+use zeroclaw::memory::traits::{Memory, MemoryEntry, MemoryCategory};
+use std::collections::HashMap;
+use std::sync::RwLock;
+use uuid::Uuid;
+
+pub struct InMemoryBackend {
+    storage: RwLock<HashMap<String, MemoryEntry>>,
+}
+
+impl InMemoryBackend {
+    pub fn new() -> Self {
+        Self {
+            storage: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl Memory for InMemoryBackend {
+    fn name(&self) -> &str {
+        "in_memory"
+    }
+
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let entry = MemoryEntry {
+            id: Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            content: content.to_string(),
+            category,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            session_id: session_id.map(ToString::to_string),
+            score: None,
+        };
+
+        let mut storage = self.storage.write().unwrap();
+        storage.insert(key.to_string(), entry);
+        Ok(())
+    }
+
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let storage = self.storage.read().unwrap();
+        let query_lower = query.to_lowercase();
+
+        let mut results: Vec<_> = storage
+            .values()
+            .filter(|entry| {
+                // Filter by session if specified
+                if let Some(sid) = session_id {
+                    if entry.session_id.as_deref() != Some(sid) {
+                        return false;
+                    }
+                }
+
+                // Simple keyword match
+                entry.content.to_lowercase().contains(&query_lower)
+                    || entry.key.to_lowercase().contains(&query_lower)
+            })
+            .cloned()
+            .collect();
+
+        // Sort by timestamp (most recent first)
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+        let storage = self.storage.read().unwrap();
+        Ok(storage.get(key).cloned())
+    }
+
+    async fn list(
+        &self,
+        category: Option<&MemoryCategory>,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryEntry>> {
+        let storage = self.storage.read().unwrap();
+
+        let results: Vec<_> = storage
+            .values()
+            .filter(|entry| {
+                if let Some(cat) = category {
+                    if &entry.category != cat {
+                        return false;
+                    }
+                }
+                if let Some(sid) = session_id {
+                    if entry.session_id.as_deref() != Some(sid) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        Ok(results)
+    }
+
+    async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+        let mut storage = self.storage.write().unwrap();
+        Ok(storage.remove(key).is_some())
+    }
+
+    async fn count(&self) -> anyhow::Result<usize> {
+        let storage = self.storage.read().unwrap();
+        Ok(storage.len())
+    }
+
+    async fn health_check(&self) -> bool {
+        true
+    }
+}
+```
+
+## Vector Search Example
+
+For vector-based semantic search (SQLite with embeddings, Qdrant, etc.):
+
+```rust
+async fn recall(
+    &self,
+    query: &str,
+    limit: usize,
+    session_id: Option<&str>,
+) -> anyhow::Result<Vec<MemoryEntry>> {
+    // Generate embedding for query
+    let query_embedding = self.embedding_provider
+        .embed(query)
+        .await?;
+
+    // Vector similarity search
+    let results = self.vector_store
+        .search(&query_embedding, limit, session_id)
+        .await?;
+
+    Ok(results)
+}
+```
+
+## Factory Registration
+
+Register your memory backend in the factory:
+
+```rust
+// src/memory/mod.rs
+pub fn create_memory_backend(backend: &str, config: &MemoryConfig) -> Arc<dyn Memory> {
+    match backend {
+        "sqlite" => Arc::new(SqliteMemory::new(config)),
+        "markdown" => Arc::new(MarkdownMemory::new(config)),
+        "qdrant" => Arc::new(QdrantMemory::new(config)),
+        "in_memory" => Arc::new(InMemoryBackend::new()),
+        _ => panic!("Unknown memory backend: {}", backend),
+    }
+}
+```
+
+## Best Practices
+
+<Note>
+**Concurrent Access:** Use proper locking (`RwLock`, `Mutex`) for in-memory backends or rely on database transaction isolation for persistence.
+</Note>
+
+<Tip>
+**Search Quality:** For keyword search, implement fuzzy matching and stemming. For semantic search, use embeddings with cosine similarity.
+</Tip>
+
+<Warning>
+**Session Isolation:** Always respect `session_id` filters to prevent data leakage between sessions.
+</Warning>
+
+<Tip>
+**Performance:** Index frequently queried fields (key, category, session_id, timestamp) for faster lookups.
+</Tip>
+
+<Note>
+**Vector Reindexing:** Implement `reindex()` for vector-based backends to support model migration.
+</Note>
+
+## Testing
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_store_and_get() {
+        let backend = InMemoryBackend::new();
+
+        backend
+            .store("test_key", "test_content", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+
+        let entry = backend.get("test_key").await.unwrap();
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().content, "test_content");
+    }
+
+    #[tokio::test]
+    async fn test_recall() {
+        let backend = InMemoryBackend::new();
+
+        backend
+            .store("key1", "rust programming", MemoryCategory::Core, None)
+            .await
+            .unwrap();
+
+        let results = backend.recall("rust", 10, None).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_session_isolation() {
+        let backend = InMemoryBackend::new();
+
+        backend
+            .store("key1", "data", MemoryCategory::Core, Some("session1"))
+            .await
+            .unwrap();
+
+        let results = backend.recall("data", 10, Some("session2")).await.unwrap();
+        assert_eq!(results.len(), 0);
+    }
+}
+```
+
+## Related
+
+- [Tool Trait](/api/tool-trait) - Tools can store results in memory
+- [Provider Trait](/api/provider-trait) - Providers for embeddings
+- [Configuration Reference](/reference/config) - Configure memory backends in config.toml

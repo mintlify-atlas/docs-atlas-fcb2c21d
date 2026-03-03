@@ -1,0 +1,378 @@
+---
+title: STM32 Nucleo Setup
+description: Flash and configure STM32 Nucleo boards with ZeroClaw
+---
+
+# STM32 Nucleo Setup
+
+STM32 Nucleo boards are ARM Cortex-M development boards from STMicroelectronics. ZeroClaw communicates with them via USB serial (ST-LINK Virtual COM Port) using a JSON protocol.
+
+## Supported Boards
+
+| Board | MCU | Flash | RAM | Status |
+|-------|-----|-------|-----|--------|
+| **Nucleo-F401RE** | STM32F401RET6 | 512KB | 96KB | ✅ Primary |
+| **Other Nucleo** | Various STM32 | Varies | Varies | 🚧 Experimental |
+
+<Note>
+**Nucleo-F401RE** is the primary supported board. Other Nucleo boards may work with firmware modifications.
+</Note>
+
+## Hardware Features
+
+- **MCU**: ARM Cortex-M4, 84 MHz
+- **GPIO**: Arduino-compatible headers + Morpho connectors
+- **Peripherals**: I2C, SPI, UART, ADC, PWM
+- **Debugger**: Onboard ST-LINK/V2.1
+- **USB**: Virtual COM Port (no FTDI needed)
+- **LED**: PA5 (Arduino D13 equivalent, LD2)
+- **Button**: PC13 (USER button)
+
+## Quick Start
+
+### 1. Flash Firmware
+
+ZeroClaw provides pre-built firmware for the Nucleo-F401RE:
+
+```bash
+cd ~/zeroclaw
+
+# Auto-flash via OpenOCD
+zeroclaw peripheral flash-nucleo
+```
+
+This command:
+1. Builds the firmware from `firmware/zeroclaw-nucleo/`
+2. Flashes it via OpenOCD + ST-LINK
+3. Verifies the upload
+
+### 2. Find Serial Port
+
+```bash
+# Linux
+ls /dev/ttyACM*
+# Should show: /dev/ttyACM0
+
+# macOS
+ls /dev/cu.usbmodem*
+# Should show: /dev/cu.usbmodem14203 (number varies)
+
+# Windows
+mode
+# Should show: COM3, COM4, etc.
+```
+
+### 3. Add to Configuration
+
+```bash
+# Auto-configure
+zeroclaw peripheral add nucleo-f401re /dev/ttyACM0
+
+# Or manually edit ~/.zeroclaw/config.toml
+```
+
+```toml
+[peripherals]
+enabled = true
+
+[[peripherals.boards]]
+board = "nucleo-f401re"
+transport = "serial"
+path = "/dev/ttyACM0"  # Adjust for your system
+baud = 115200
+```
+
+### 4. Test Connection
+
+```bash
+# Test GPIO
+zeroclaw agent -m "Turn on the LED on the Nucleo board"
+
+# This should light up LD2 (green LED next to reset button)
+```
+
+## Pin Mapping
+
+### Arduino Headers
+
+```
+CN9 (Left):              CN5 (Right):
+D0  = PA3  (UART RX)     D8  = PA9
+D1  = PA2  (UART TX)     D9  = PC7
+D2  = PA10               D10 = PB6  (SPI CS)
+D3  = PB3                D11 = PA7  (SPI MOSI)
+D4  = PB5                D12 = PA6  (SPI MISO)
+D5  = PB4                D13 = PA5  (LED, SPI SCK)
+D6  = PB10               D14 = PB9  (I2C SDA)
+D7  = PA8                D15 = PB8  (I2C SCL)
+
+CN7 (Analog):
+A0 = PA0
+A1 = PA1
+A2 = PA4
+A3 = PB0
+A4 = PC1
+A5 = PC0
+```
+
+### Special Pins
+
+| Function | Pin | Notes |
+|----------|-----|-------|
+| **User LED (LD2)** | PA5 (D13) | Built-in green LED |
+| **User Button** | PC13 | Active low |
+| **USART2 (Console)** | PA2 (TX), PA3 (RX) | ST-LINK VCP |
+| **I2C1** | PB9 (SDA), PB8 (SCL) | Arduino I2C |
+| **SPI1** | PA7 (MOSI), PA6 (MISO), PA5 (SCK) | Arduino SPI |
+
+<Warning>
+**Do not use PA2, PA3**: Reserved for USART2 (ZeroClaw serial protocol)
+</Warning>
+
+## Wiring Examples
+
+### External LED
+
+```
+Nucleo           LED
+──────           ───
+D8 (PA9) ───────┬──▶│
+                │    └─── GND
+                └─── 220Ω
+```
+
+```bash
+zeroclaw agent -m "Set GPIO pin 8 high on Nucleo"
+```
+
+### Button Input
+
+```
+Nucleo           Button
+──────           ──────
+D2 (PA10) ───────┤  ├──── 3.3V
+GND ────────────┤  ├
+                 └──┘
+```
+
+```bash
+zeroclaw agent -m "Read GPIO pin 2 on Nucleo"
+```
+
+## Manual Firmware Flashing
+
+### Prerequisites
+
+```bash
+# Install OpenOCD (if not using zeroclaw flash command)
+# Ubuntu/Debian
+sudo apt install openocd
+
+# macOS
+brew install openocd
+
+# Windows
+# Download from https://openocd.org/pages/getting-openocd.html
+```
+
+### Build Firmware
+
+```bash
+cd ~/zeroclaw/firmware/zeroclaw-nucleo
+
+# Build for STM32F401
+cargo build --release
+
+# Binary location:
+# target/thumbv7em-none-eabihf/release/zeroclaw-nucleo
+```
+
+### Flash with OpenOCD
+
+```bash
+# Connect Nucleo via USB, then:
+openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
+  -c "program target/thumbv7em-none-eabihf/release/zeroclaw-nucleo verify reset exit"
+```
+
+### Flash with probe-rs (Alternative)
+
+```bash
+# Install probe-rs
+cargo install probe-rs-tools
+
+# Flash
+probe-rs run --chip STM32F401RETx target/thumbv7em-none-eabihf/release/zeroclaw-nucleo
+```
+
+## Serial Protocol
+
+The firmware implements a JSON-over-UART protocol:
+
+### Request Format
+
+```json
+{"id":"1","cmd":"gpio_write","args":{"pin":13,"value":1}}
+```
+
+### Response Format
+
+```json
+{"id":"1","ok":true,"result":"done"}
+```
+
+### Supported Commands
+
+| Command | Args | Description |
+|---------|------|-------------|
+| `ping` | None | Health check, returns "pong" |
+| `gpio_read` | `{"pin": N}` | Read GPIO pin (0 or 1) |
+| `gpio_write` | `{"pin": N, "value": V}` | Write GPIO pin (0=LOW, 1=HIGH) |
+| `capabilities` | None | Get available GPIO pins |
+
+### Testing Manually
+
+```bash
+# Open serial connection
+screen /dev/ttyACM0 115200
+
+# Send commands (type and press Enter):
+{"id":"1","cmd":"ping","args":{}}
+{"id":"2","cmd":"gpio_write","args":{"pin":13,"value":1}}
+{"id":"3","cmd":"gpio_read","args":{"pin":13}}
+
+# Exit screen: Ctrl+A, then K, then Y
+```
+
+## Tools Provided
+
+When a Nucleo board is connected, ZeroClaw exposes:
+
+| Tool | Description |
+|------|-------------|
+| `gpio_read` | Read digital pin value |
+| `gpio_write` | Set digital pin high or low |
+| `hardware_capabilities` | Query available GPIO pins |
+| `hardware_memory_map` | Get STM32F401 memory layout |
+| `hardware_board_info` | Get board architecture and VID/PID |
+
+## Firmware Architecture
+
+The firmware is built with:
+
+- **Language**: Rust (embedded, no_std)
+- **Framework**: [Embassy](https://embassy.dev/) (async embedded)
+- **HAL**: embassy-stm32
+- **Protocol**: Newline-delimited JSON over USART2
+- **Size**: ~30KB (fits easily in 512KB flash)
+
+**Source**: `firmware/zeroclaw-nucleo/src/main.rs`
+
+## Advanced: Custom Firmware
+
+To add custom peripherals (I2C sensors, PWM servos, etc.):
+
+1. Edit `firmware/zeroclaw-nucleo/src/main.rs`
+2. Add new commands to the `handleLine` function
+3. Rebuild and reflash
+4. Add corresponding Rust tools in `src/peripherals/serial.rs`
+
+**Example: Add I2C read command**
+
+```rust
+// In firmware main.rs
+if has_cmd(line, b"i2c_read") {
+    let addr = parse_arg(line, b"addr").unwrap_or(0) as u8;
+    let reg = parse_arg(line, b"reg").unwrap_or(0) as u8;
+    // I2C read logic...
+    write_response(&mut tx, &id, true, "0x42", None).await;
+    return;
+}
+```
+
+## Troubleshooting
+
+### Serial port not found
+
+```bash
+# Linux: Check dmesg after plugging in
+dmesg | tail
+# Look for: usb 1-1: new full-speed USB device
+# and: cdc_acm 1-1:1.2: ttyACM0
+
+# macOS: Check system_profiler
+system_profiler SPUSBDataType | grep -A 10 "STMicroelectronics"
+
+# Windows: Device Manager > Ports (COM & LPT)
+```
+
+### Permission denied on Linux
+
+```bash
+# Add user to dialout group
+sudo usermod -aG dialout $USER
+
+# Logout and login, or:
+newgrp dialout
+```
+
+### Firmware upload fails
+
+```bash
+# Check ST-LINK connection
+openocd -f interface/stlink.cfg -f target/stm32f4x.cfg
+# Should show: "Info : stm32f4x.cpu: hardware has 6 breakpoints"
+
+# If fails, update ST-LINK firmware:
+# https://www.st.com/en/development-tools/stsw-link007.html
+```
+
+### No response from firmware
+
+```bash
+# Reset board
+# Press black RESET button on Nucleo
+
+# Check USART2 pins
+# PA2 (TX) and PA3 (RX) must not be connected to other devices
+
+# Reflash firmware
+zeroclaw peripheral flash-nucleo
+```
+
+### "Response id mismatch"
+
+- Firmware crashed or rebooted
+- Serial buffer corruption
+- Try unplugging and replugging USB
+
+## Performance Notes
+
+- **GPIO speed**: ~1 MHz toggle rate
+- **Serial latency**: ~10ms round-trip
+- **Flash time**: ~5 seconds
+- **Boot time**: ~100ms after reset
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Supported Boards" icon="microchip" href="/hardware/supported-boards">
+    Compare all hardware platforms
+  </Card>
+  <Card title="Arduino Setup" icon="arduino" href="/hardware/peripherals/arduino">
+    Similar setup for Arduino boards
+  </Card>
+  <Card title="Hardware Architecture" icon="diagram-project" href="/architecture/hardware-peripherals-design">
+    Understand the peripheral system
+  </Card>
+  <Card title="Adding Boards" icon="plus" href="/contributing/adding-boards-and-tools">
+    Add support for new boards
+  </Card>
+</CardGroup>
+
+## Reference
+
+- [STM32 Nucleo-F401RE Product Page](https://www.st.com/en/evaluation-tools/nucleo-f401re.html)
+- [STM32F401 Datasheet](https://www.st.com/resource/en/datasheet/stm32f401re.pdf)
+- [Embassy Async Embedded Framework](https://embassy.dev/)
+- [OpenOCD Documentation](https://openocd.org/doc/html/index.html)

@@ -1,0 +1,317 @@
+---
+title: Creating Custom Providers
+description: Learn how to implement custom LLM providers for ZeroClaw
+---
+
+ZeroClaw's provider system lets you add any LLM backend in ~30 lines of code. Providers handle communication with language models and expose a uniform interface to the agent.
+
+## Overview
+
+Providers implement the `Provider` trait, which defines a simple contract:
+
+```rust
+#[async_trait]
+pub trait Provider: Send + Sync {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String>;
+}
+```
+
+## Step-by-Step Guide
+
+<Steps>
+
+### Create Your Provider Module
+
+Create a new file in `src/providers/` for your provider:
+
+```rust
+use anyhow::Result;
+use async_trait::async_trait;
+use crate::providers::traits::Provider;
+
+/// Custom provider for Ollama (local LLM server)
+pub struct OllamaProvider {
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl OllamaProvider {
+    pub fn new(base_url: Option<&str>) -> Self {
+        Self {
+            base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+```
+
+### Implement the Provider Trait
+
+Implement the `chat` method to handle API communication:
+
+```rust
+#[async_trait]
+impl Provider for OllamaProvider {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String> {
+        let url = format!("{}/api/generate", self.base_url);
+
+        let body = serde_json::json!({
+            "model": model,
+            "prompt": message,
+            "temperature": temperature,
+            "stream": false,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        resp["response"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No response field in Ollama reply"))
+    }
+}
+```
+
+### Register Your Provider
+
+Add your provider to the factory in `src/providers/mod.rs`:
+
+```rust
+pub fn create_provider(name: &str, api_key: Option<&str>) -> Result<Box<dyn Provider>> {
+    match name {
+        "openai" => Ok(Box::new(openai::OpenAIProvider::new(api_key)?)),
+        "anthropic" => Ok(Box::new(anthropic::AnthropicProvider::new(api_key)?)),
+        "ollama" => Ok(Box::new(ollama::OllamaProvider::new(None))),
+        _ => anyhow::bail!("Unknown provider: {}", name),
+    }
+}
+```
+
+### Configure and Test
+
+Add your provider to `config.toml`:
+
+```toml
+default_provider = "ollama"
+default_model = "llama3.2"
+default_temperature = 0.7
+
+# Ollama doesn't need an API key for local use
+api_key = ""
+```
+
+Test your provider:
+
+```bash
+zeroclaw chat "Hello, test my new provider!"
+```
+
+</Steps>
+
+## Complete Example
+
+Here's the full implementation from `examples/custom_provider.rs`:
+
+```rust
+use anyhow::Result;
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait Provider: Send + Sync {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String>;
+}
+
+pub struct OllamaProvider {
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl OllamaProvider {
+    pub fn new(base_url: Option<&str>) -> Self {
+        Self {
+            base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for OllamaProvider {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String> {
+        let url = format!("{}/api/generate", self.base_url);
+
+        let body = serde_json::json!({
+            "model": model,
+            "prompt": message,
+            "temperature": temperature,
+            "stream": false,
+        });
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        resp["response"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No response field in Ollama reply"))
+    }
+}
+```
+
+## Advanced Features
+
+### Error Handling
+
+Providers should return descriptive errors:
+
+```rust
+if resp.status().is_client_error() {
+    anyhow::bail!("API client error: {}", resp.status());
+}
+
+if resp.status().is_server_error() {
+    anyhow::bail!("API server error: {}", resp.status());
+}
+```
+
+### Streaming Support
+
+For streaming responses, implement `chat_stream`:
+
+```rust
+#[async_trait]
+pub trait Provider: Send + Sync {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String>;
+    
+    async fn chat_stream(
+        &self,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+        // Optional streaming implementation
+        unimplemented!("Streaming not supported")
+    }
+}
+```
+
+### Authentication
+
+Handle API keys securely:
+
+```rust
+pub struct CustomProvider {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl CustomProvider {
+    pub fn new(api_key: Option<&str>) -> Result<Self> {
+        let api_key = api_key
+            .ok_or_else(|| anyhow::anyhow!("API key required for CustomProvider"))?
+            .to_string();
+
+        Ok(Self {
+            api_key,
+            client: reqwest::Client::new(),
+        })
+    }
+}
+
+#[async_trait]
+impl Provider for CustomProvider {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String> {
+        let resp = self
+            .client
+            .post("https://api.example.com/v1/chat")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": message,
+                "temperature": temperature,
+            }))
+            .send()
+            .await?;
+        
+        // Handle response...
+        Ok("response".to_string())
+    }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep implementations simple and focused">
+    Focus on API communication. Don't add business logic — that belongs in the agent orchestration layer.
+  </Accordion>
+
+  <Accordion title="Handle rate limits gracefully">
+    Implement exponential backoff for rate-limited APIs:
+    
+    ```rust
+    let mut retries = 0;
+    loop {
+        match self.client.post(&url).send().await {
+            Ok(resp) if resp.status() == 429 => {
+                if retries >= 3 {
+                    anyhow::bail!("Rate limited after retries");
+                }
+                tokio::time::sleep(Duration::from_secs(2u64.pow(retries))).await;
+                retries += 1;
+            }
+            Ok(resp) => return Ok(resp),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Never log API keys or sensitive data">
+    Use masked logging for credentials:
+    
+    ```rust
+    tracing::info!("Calling provider (key: ***masked**)");
+    ```
+  </Accordion>
+
+  <Accordion title="Test against provider's actual API">
+    Use integration tests with real (or mocked) API calls:
+    
+    ```rust
+    #[tokio::test]
+    async fn test_ollama_provider() {
+        let provider = OllamaProvider::new(None);
+        let response = provider
+            .chat("Hello", "llama3.2", 0.7)
+            .await
+            .unwrap();
+        assert!(!response.is_empty());
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Channels" icon="comments" href="/guides/creating-channels">
+    Learn how to add messaging platform support
+  </Card>
+  <Card title="Creating Tools" icon="wrench" href="/guides/creating-tools">
+    Give your agent new capabilities
+  </Card>
+</CardGroup>

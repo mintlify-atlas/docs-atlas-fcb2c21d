@@ -1,0 +1,467 @@
+---
+title: Creating Custom Tools
+description: Learn how to implement custom tools for ZeroClaw agents
+---
+
+Tools are the agent's hands — they let it interact with the world. Create custom tools to give your agent new capabilities like API access, file operations, or hardware control.
+
+## Overview
+
+Tools implement the `Tool` trait, which defines their interface and execution logic:
+
+```rust
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn parameters_schema(&self) -> Value;
+    async fn execute(&self, args: Value) -> Result<ToolResult>;
+}
+```
+
+## Step-by-Step Guide
+
+<Steps>
+
+### Define Your Tool Struct
+
+Create a new file in `src/tools/` or define inline:
+
+```rust
+use anyhow::Result;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use crate::tools::traits::{Tool, ToolResult};
+
+/// A tool that fetches URLs and returns HTTP status
+pub struct HttpGetTool;
+```
+
+### Implement Tool Metadata
+
+Provide name, description, and parameter schema:
+
+```rust
+#[async_trait]
+impl Tool for HttpGetTool {
+    fn name(&self) -> &str {
+        "http_get"
+    }
+
+    fn description(&self) -> &str {
+        "Fetch a URL and return the HTTP status code and content length"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL to fetch"
+                }
+            },
+            "required": ["url"]
+        })
+    }
+}
+```
+
+### Implement Execute Logic
+
+Handle parameter validation and execution:
+
+```rust
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        // Extract and validate parameters
+        let url = args["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+
+        // Execute the tool logic
+        match reqwest::get(url).await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let len = resp.content_length().unwrap_or(0);
+                
+                Ok(ToolResult {
+                    success: status < 400,
+                    output: format!("HTTP {status} — {len} bytes"),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Request failed: {e}"))
+            }),
+        }
+    }
+```
+
+### Register Your Tool
+
+Add your tool to `src/tools/mod.rs`:
+
+```rust
+pub fn default_tools() -> Vec<Box<dyn Tool>> {
+    vec![
+        Box::new(ShellTool),
+        Box::new(FileReadTool),
+        Box::new(HttpGetTool), // Your new tool
+        // ... other tools
+    ]
+}
+```
+
+### Test Your Tool
+
+Create a test to verify behavior:
+
+```rust
+#[tokio::test]
+async fn test_http_get_tool() {
+    let tool = HttpGetTool;
+    
+    let args = json!({
+        "url": "https://httpbin.org/status/200"
+    });
+    
+    let result = tool.execute(args).await.unwrap();
+    assert!(result.success);
+    assert!(result.output.contains("200"));
+}
+```
+
+</Steps>
+
+## Complete Example
+
+Here's the full implementation from `examples/custom_tool.rs`:
+
+```rust
+use anyhow::Result;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+}
+
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn parameters_schema(&self) -> Value;
+    async fn execute(&self, args: Value) -> Result<ToolResult>;
+}
+
+/// Example: A tool that fetches a URL and returns the status code
+pub struct HttpGetTool;
+
+#[async_trait]
+impl Tool for HttpGetTool {
+    fn name(&self) -> &str {
+        "http_get"
+    }
+
+    fn description(&self) -> &str {
+        "Fetch a URL and return the HTTP status code and content length"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "URL to fetch" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let url = args["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+
+        match reqwest::get(url).await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let len = resp.content_length().unwrap_or(0);
+                Ok(ToolResult {
+                    success: status < 400,
+                    output: format!("HTTP {status} — {len} bytes"),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Request failed: {e}")),
+            }),
+        }
+    }
+}
+```
+
+## Advanced Patterns
+
+### Stateful Tools
+
+Tools with internal state:
+
+```rust
+pub struct DatabaseTool {
+    connection_pool: Arc<sqlx::PgPool>,
+}
+
+impl DatabaseTool {
+    pub fn new(db_url: &str) -> Result<Self> {
+        let pool = sqlx::PgPool::connect(db_url).await?;
+        Ok(Self {
+            connection_pool: Arc::new(pool),
+        })
+    }
+}
+
+#[async_trait]
+impl Tool for DatabaseTool {
+    fn name(&self) -> &str { "database_query" }
+    
+    fn description(&self) -> &str {
+        "Execute a read-only SQL query against the database"
+    }
+    
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "SQL query" }
+            },
+            "required": ["query"]
+        })
+    }
+    
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let query = args["query"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing query"))?;
+        
+        // Validate read-only
+        if !query.trim().to_lowercase().starts_with("select") {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Only SELECT queries allowed".to_string()),
+            });
+        }
+        
+        let rows = sqlx::query(query)
+            .fetch_all(&*self.connection_pool)
+            .await?;
+        
+        Ok(ToolResult {
+            success: true,
+            output: format!("Returned {} rows", rows.len()),
+            error: None,
+        })
+    }
+}
+```
+
+### Parameter Validation
+
+Strict parameter checking:
+
+```rust
+async fn execute(&self, args: Value) -> Result<ToolResult> {
+    // Required parameter
+    let url = args.get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: url"))?;
+    
+    // Optional parameter with default
+    let timeout = args.get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30);
+    
+    // Enum parameter
+    let method = args.get("method")
+        .and_then(|v| v.as_str())
+        .unwrap_or("GET");
+    
+    if !["GET", "POST", "PUT", "DELETE"].contains(&method) {
+        return Ok(ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some(format!("Invalid method: {method}")),
+        });
+    }
+    
+    // Validate URL format
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Ok(ToolResult {
+            success: false,
+            output: String::new(),
+            error: Some("URL must start with http:// or https://".to_string()),
+        });
+    }
+    
+    // Execute...
+    Ok(ToolResult {
+        success: true,
+        output: format!("Executed {method} {url}"),
+        error: None,
+    })
+}
+```
+
+### Security Guards
+
+Enforce security policies:
+
+```rust
+use crate::security::SecurityPolicy;
+
+pub struct FileWriteTool {
+    policy: Arc<SecurityPolicy>,
+}
+
+#[async_trait]
+impl Tool for FileWriteTool {
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let path = args["path"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
+        let content = args["content"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing content"))?;
+        
+        // Check security policy
+        if !self.policy.can_write_file(path) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Access denied: {path}")),
+            });
+        }
+        
+        // Execute write
+        tokio::fs::write(path, content).await?;
+        
+        Ok(ToolResult {
+            success: true,
+            output: format!("Wrote {} bytes to {path}", content.len()),
+            error: None,
+        })
+    }
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Return structured results">
+    Always use `ToolResult` with clear success/failure indicators:
+    
+    ```rust
+    // Good
+    Ok(ToolResult {
+        success: true,
+        output: "Operation completed",
+        error: None,
+    })
+    
+    // Bad - don't panic or return Err for expected failures
+    Err(anyhow::anyhow!("User not found"))
+    ```
+  </Accordion>
+
+  <Accordion title="Validate all inputs">
+    Never trust LLM-generated parameters:
+    
+    ```rust
+    // Validate types
+    let port = args["port"].as_u64()
+        .ok_or_else(|| anyhow::anyhow!("port must be a number"))?;
+    
+    // Validate ranges
+    if port < 1 || port > 65535 {
+        return Ok(ToolResult::error("Invalid port range"));
+    }
+    
+    // Validate paths
+    let path = Path::new(path_str);
+    if !path.starts_with(&workspace_dir) {
+        return Ok(ToolResult::error("Path outside workspace"));
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Keep execution time bounded">
+    Implement timeouts for long-running operations:
+    
+    ```rust
+    use tokio::time::{timeout, Duration};
+    
+    let result = timeout(
+        Duration::from_secs(30),
+        expensive_operation()
+    ).await;
+    
+    match result {
+        Ok(Ok(data)) => Ok(ToolResult::success(data)),
+        Ok(Err(e)) => Ok(ToolResult::error(e.to_string())),
+        Err(_) => Ok(ToolResult::error("Operation timed out")),
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Document parameters clearly">
+    Use descriptive parameter schemas:
+    
+    ```rust
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Full HTTP/HTTPS URL to fetch. Example: https://api.example.com/users"
+                },
+                "method": {
+                    "type": "string",
+                    "description": "HTTP method (GET, POST, PUT, DELETE). Defaults to GET",
+                    "enum": ["GET", "POST", "PUT", "DELETE"]
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "Optional HTTP headers as key-value pairs"
+                }
+            },
+            "required": ["url"]
+        })
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Never log sensitive data">
+    Redact credentials and secrets:
+    
+    ```rust
+    tracing::info!("Executing API call to {}", url);
+    // Don't log: API keys, passwords, tokens, user data
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Peripherals" icon="microchip" href="/guides/peripherals">
+    Control hardware with peripheral tools
+  </Card>
+  <Card title="Custom Memory" icon="database" href="/guides/custom-memory">
+    Implement custom memory backends
+  </Card>
+</CardGroup>

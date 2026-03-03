@@ -1,0 +1,404 @@
+---
+title: Provider Trait
+description: Core trait for implementing LLM providers in ZeroClaw
+---
+
+The `Provider` trait defines the interface for all LLM providers in ZeroClaw. Implement this trait to integrate new language model APIs into the framework.
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait Provider: Send + Sync {
+    // Core methods
+    fn capabilities(&self) -> ProviderCapabilities;
+    fn convert_tools(&self, tools: &[ToolSpec]) -> ToolsPayload;
+    async fn simple_chat(&self, message: &str, model: &str, temperature: f64) -> anyhow::Result<String>;
+    async fn chat_with_system(&self, system_prompt: Option<&str>, message: &str, model: &str, temperature: f64) -> anyhow::Result<String>;
+    async fn chat_with_history(&self, messages: &[ChatMessage], model: &str, temperature: f64) -> anyhow::Result<String>;
+    async fn chat(&self, request: ChatRequest<'_>, model: &str, temperature: f64) -> anyhow::Result<ChatResponse>;
+    async fn chat_with_tools(&self, messages: &[ChatMessage], tools: &[serde_json::Value], model: &str, temperature: f64) -> anyhow::Result<ChatResponse>;
+    
+    // Capability checks
+    fn supports_native_tools(&self) -> bool;
+    fn supports_vision(&self) -> bool;
+    fn supports_streaming(&self) -> bool;
+    
+    // Streaming
+    fn stream_chat_with_system(&self, system_prompt: Option<&str>, message: &str, model: &str, temperature: f64, options: StreamOptions) -> stream::BoxStream<'static, StreamResult<StreamChunk>>;
+    fn stream_chat_with_history(&self, messages: &[ChatMessage], model: &str, temperature: f64, options: StreamOptions) -> stream::BoxStream<'static, StreamResult<StreamChunk>>;
+    
+    // Lifecycle
+    async fn warmup(&self) -> anyhow::Result<()>;
+}
+```
+
+## Required Methods
+
+### `chat_with_system`
+
+One-shot chat with optional system prompt. This is the only **required** method - all other methods have default implementations.
+
+<ParamField path="system_prompt" type="Option<&str>">
+  Optional system prompt to guide the model's behavior
+</ParamField>
+
+<ParamField path="message" type="&str" required>
+  The user message to send to the model
+</ParamField>
+
+<ParamField path="model" type="&str" required>
+  Model identifier (e.g., "claude-3-5-sonnet-20241022", "gpt-4")
+</ParamField>
+
+<ParamField path="temperature" type="f64" required>
+  Sampling temperature (typically 0.0-1.0)
+</ParamField>
+
+<ResponseField name="Result" type="anyhow::Result<String>">
+  The model's response text, or an error
+</ResponseField>
+
+## Optional Methods with Defaults
+
+### `capabilities`
+
+Declare what features this provider supports.
+
+<ResponseField name="ProviderCapabilities" type="ProviderCapabilities">
+  ```rust
+  pub struct ProviderCapabilities {
+      pub native_tool_calling: bool,  // Supports native function calling API
+      pub vision: bool,                // Supports image inputs
+  }
+  ```
+</ResponseField>
+
+**Default:** Returns all capabilities set to `false`.
+
+### `convert_tools`
+
+Convert unified tool specifications to provider-native format.
+
+<ParamField path="tools" type="&[ToolSpec]" required>
+  Array of tool specifications in unified format
+</ParamField>
+
+<ResponseField name="ToolsPayload" type="ToolsPayload">
+  Provider-specific tool payload format:
+  - `ToolsPayload::Gemini` - Gemini functionDeclarations format
+  - `ToolsPayload::Anthropic` - Anthropic tools format
+  - `ToolsPayload::OpenAI` - OpenAI tools format
+  - `ToolsPayload::PromptGuided` - Text-based fallback (injected into system prompt)
+</ResponseField>
+
+**Default:** Returns `ToolsPayload::PromptGuided` with formatted instructions.
+
+### `simple_chat`
+
+Simple one-shot chat without system prompt.
+
+<ParamField path="message" type="&str" required>
+  User message
+</ParamField>
+
+<ParamField path="model" type="&str" required>
+  Model identifier
+</ParamField>
+
+<ParamField path="temperature" type="f64" required>
+  Sampling temperature
+</ParamField>
+
+**Default:** Delegates to `chat_with_system` with `None` as system prompt.
+
+### `chat_with_history`
+
+Multi-turn conversation with message history.
+
+<ParamField path="messages" type="&[ChatMessage]" required>
+  Array of chat messages with roles (system, user, assistant, tool)
+</ParamField>
+
+<ParamField path="model" type="&str" required>
+  Model identifier
+</ParamField>
+
+<ParamField path="temperature" type="f64" required>
+  Sampling temperature
+</ParamField>
+
+**Default:** Extracts system message and last user message, delegates to `chat_with_system`.
+
+### `chat`
+
+Structured chat API for agent loop callers. Handles tool injection.
+
+<ParamField path="request" type="ChatRequest<'_>" required>
+  ```rust
+  pub struct ChatRequest<'a> {
+      pub messages: &'a [ChatMessage],
+      pub tools: Option<&'a [ToolSpec]>,
+  }
+  ```
+</ParamField>
+
+<ParamField path="model" type="&str" required>
+  Model identifier
+</ParamField>
+
+<ParamField path="temperature" type="f64" required>
+  Sampling temperature
+</ParamField>
+
+<ResponseField name="ChatResponse" type="ChatResponse">
+  ```rust
+  pub struct ChatResponse {
+      pub text: Option<String>,
+      pub tool_calls: Vec<ToolCall>,
+      pub usage: Option<TokenUsage>,
+      pub reasoning_content: Option<String>,
+      pub quota_metadata: Option<QuotaMetadata>,
+      pub stop_reason: Option<NormalizedStopReason>,
+      pub raw_stop_reason: Option<String>,
+  }
+  ```
+</ResponseField>
+
+**Default:** If tools are provided but provider doesn't support native tools, injects tool instructions into system prompt.
+
+### `chat_with_tools`
+
+Chat with native tool calling support.
+
+<ParamField path="messages" type="&[ChatMessage]" required>
+  Message history
+</ParamField>
+
+<ParamField path="tools" type="&[serde_json::Value]" required>
+  Provider-native tool definitions
+</ParamField>
+
+<ParamField path="model" type="&str" required>
+  Model identifier
+</ParamField>
+
+<ParamField path="temperature" type="f64" required>
+  Sampling temperature
+</ParamField>
+
+**Default:** Delegates to `chat_with_history` and returns empty `tool_calls` vector.
+
+### `supports_native_tools`
+
+Check if provider supports native function calling API.
+
+**Default:** Returns `capabilities().native_tool_calling`.
+
+### `supports_vision`
+
+Check if provider supports multimodal vision input.
+
+**Default:** Returns `capabilities().vision`.
+
+### `supports_streaming`
+
+Check if provider supports streaming responses.
+
+**Default:** Returns `false`.
+
+### `stream_chat_with_system`
+
+Streaming version of `chat_with_system`.
+
+<ParamField path="options" type="StreamOptions">
+  ```rust
+  pub struct StreamOptions {
+      pub enabled: bool,
+      pub count_tokens: bool,
+  }
+  ```
+</ParamField>
+
+**Default:** Returns empty stream (not supported).
+
+### `stream_chat_with_history`
+
+Streaming version of `chat_with_history`.
+
+**Default:** Extracts last message and delegates to `stream_chat_with_system`.
+
+### `warmup`
+
+Warm up HTTP connection pool (TLS handshake, DNS, HTTP/2).
+
+**Default:** No-op.
+
+## Types
+
+### `ChatMessage`
+
+```rust
+pub struct ChatMessage {
+    pub role: String,     // "system", "user", "assistant", "tool"
+    pub content: String,
+}
+```
+
+Helper constructors:
+- `ChatMessage::system(content)` - Create system message
+- `ChatMessage::user(content)` - Create user message
+- `ChatMessage::assistant(content)` - Create assistant message
+- `ChatMessage::tool(content)` - Create tool result message
+
+### `ToolCall`
+
+```rust
+pub struct ToolCall {
+    pub id: String,       // Provider-assigned call ID
+    pub name: String,     // Tool name
+    pub arguments: String, // JSON arguments
+}
+```
+
+### `TokenUsage`
+
+```rust
+pub struct TokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+```
+
+### `NormalizedStopReason`
+
+```rust
+pub enum NormalizedStopReason {
+    EndTurn,
+    ToolCall,
+    MaxTokens,
+    ContextWindowExceeded,
+    SafetyBlocked,
+    Cancelled,
+    Unknown(String),
+}
+```
+
+Provider-specific mappings:
+- `NormalizedStopReason::from_openai_finish_reason(raw: &str)`
+- `NormalizedStopReason::from_anthropic_stop_reason(raw: &str)`
+- `NormalizedStopReason::from_bedrock_stop_reason(raw: &str)`
+- `NormalizedStopReason::from_gemini_finish_reason(raw: &str)`
+
+## Implementation Example
+
+```rust
+use async_trait::async_trait;
+use zeroclaw::providers::traits::{Provider, ProviderCapabilities, ChatMessage};
+use reqwest::Client;
+
+pub struct AnthropicProvider {
+    credential: Option<String>,
+    base_url: String,
+}
+
+impl AnthropicProvider {
+    pub fn new(credential: Option<&str>) -> Self {
+        Self {
+            credential: credential.map(ToString::to_string),
+            base_url: "https://api.anthropic.com".to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for AnthropicProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            native_tool_calling: true,
+            vision: true,
+        }
+    }
+
+    async fn chat_with_system(
+        &self,
+        system_prompt: Option<&str>,
+        message: &str,
+        model: &str,
+        temperature: f64,
+    ) -> anyhow::Result<String> {
+        let client = Client::new();
+        let url = format!("{}/v1/messages", self.base_url);
+        
+        let api_key = self.credential
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("API key required"))?;
+        
+        let mut request = client
+            .post(&url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01");
+        
+        // Build request payload
+        let payload = serde_json::json!({
+            "model": model,
+            "max_tokens": 4096,
+            "temperature": temperature,
+            "system": system_prompt,
+            "messages": [{
+                "role": "user",
+                "content": message
+            }]
+        });
+        
+        let response = request.json(&payload).send().await?;
+        let body: serde_json::Value = response.json().await?;
+        
+        // Extract text from response
+        let text = body["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        
+        Ok(text)
+    }
+}
+```
+
+## Factory Registration
+
+After implementing the trait, register your provider in the factory:
+
+```rust
+// src/providers/mod.rs
+pub fn create_provider(name: &str, credential: Option<&str>) -> Arc<dyn Provider> {
+    match name {
+        "anthropic" => Arc::new(AnthropicProvider::new(credential)),
+        "openai" => Arc::new(OpenAIProvider::new(credential)),
+        // ... other providers
+        _ => panic!("Unknown provider: {}", name),
+    }
+}
+```
+
+## Best Practices
+
+<Note>
+**Security:** Never log API keys, tokens, or sensitive request/response data. Use the security policy framework for credential handling.
+</Note>
+
+<Tip>
+**Error Handling:** Use explicit errors for unsupported features rather than silent fallbacks. Return `ProviderCapabilityError` when a capability is not available.
+</Tip>
+
+<Warning>
+**Compatibility:** Keep factory registration keys stable (e.g., `"openai"`, `"anthropic"`). Changes require user migration.
+</Warning>
+
+## Related
+
+- [Tool Trait](/api/tool-trait) - Implement tools for providers to call
+- [Channel Trait](/api/channel-trait) - Implement communication channels
+- [Configuration Reference](/reference/config) - Configure providers in config.toml

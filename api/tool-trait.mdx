@@ -1,0 +1,381 @@
+---
+title: Tool Trait
+description: Core trait for implementing agent capabilities in ZeroClaw
+---
+
+The `Tool` trait defines the interface for all agent capabilities in ZeroClaw. Implement this trait to expose new functions to the LLM for execution during agent loops.
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn parameters_schema(&self) -> serde_json::Value;
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
+    
+    // Provided method
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters_schema(),
+        }
+    }
+}
+```
+
+## Required Methods
+
+### `name`
+
+Return the tool name used in LLM function calling.
+
+<ResponseField name="name" type="&str">
+  Stable lowercase identifier (e.g., "shell", "file_read", "memory_recall")
+</ResponseField>
+
+**Note:** This name is used by the LLM to invoke the tool. Keep it stable across versions.
+
+### `description`
+
+Return a human-readable description for the LLM.
+
+<ResponseField name="description" type="&str">
+  Clear description of what the tool does, used by the LLM to decide when to call it
+</ResponseField>
+
+**Example:** `"Execute a shell command in the workspace directory"`
+
+### `parameters_schema`
+
+Return JSON Schema for tool parameters.
+
+<ResponseField name="schema" type="serde_json::Value">
+  JSON Schema object defining required and optional parameters
+</ResponseField>
+
+**Example:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Shell command to execute"
+    },
+    "timeout": {
+      "type": "number",
+      "description": "Timeout in seconds (optional)"
+    }
+  },
+  "required": ["command"]
+}
+```
+
+### `execute`
+
+Execute the tool with provided arguments.
+
+<ParamField path="args" type="serde_json::Value" required>
+  Tool arguments as JSON value. Validate against your schema before execution.
+</ParamField>
+
+<ResponseField name="ToolResult" type="anyhow::Result<ToolResult>">
+  ```rust
+  pub struct ToolResult {
+      pub success: bool,
+      pub output: String,
+      pub error: Option<String>,
+  }
+  ```
+</ResponseField>
+
+**Important:** 
+- Validate all inputs before execution
+- Never panic - return errors via `ToolResult::error`
+- Keep execution time reasonable (use timeouts)
+- Return structured output when possible
+
+## Provided Methods
+
+### `spec`
+
+Get the full tool specification for LLM registration.
+
+<ResponseField name="ToolSpec" type="ToolSpec">
+  ```rust
+  pub struct ToolSpec {
+      pub name: String,
+      pub description: String,
+      pub parameters: serde_json::Value,
+  }
+  ```
+</ResponseField>
+
+**Default:** Combines `name()`, `description()`, and `parameters_schema()`.
+
+## Types
+
+### `ToolResult`
+
+```rust
+pub struct ToolResult {
+    pub success: bool,
+    pub output: String,
+    pub error: Option<String>,
+}
+```
+
+**Usage:**
+- Set `success: true` for successful execution
+- Put result data in `output` as string (JSON if structured)
+- Set `success: false` and populate `error` for failures
+- The LLM receives this result and can continue reasoning
+
+### `ToolSpec`
+
+```rust
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+```
+
+## Implementation Example
+
+Here's a complete shell tool implementation with security:
+
+```rust
+use async_trait::async_trait;
+use zeroclaw::tools::traits::{Tool, ToolResult};
+use zeroclaw::security::SecurityPolicy;
+use zeroclaw::runtime::RuntimeAdapter;
+use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration;
+
+const SHELL_TIMEOUT_SECS: u64 = 60;
+const MAX_OUTPUT_BYTES: usize = 1_048_576;
+
+pub struct ShellTool {
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+}
+
+impl ShellTool {
+    pub fn new(security: Arc<SecurityPolicy>, runtime: Arc<dyn RuntimeAdapter>) -> Self {
+        Self { security, runtime }
+    }
+}
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn name(&self) -> &str {
+        "shell"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a shell command in the workspace directory"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute"
+                }
+            },
+            "required": ["command"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        // Extract and validate command
+        let command = args
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'command' parameter"))?;
+
+        if command.trim().is_empty() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Command cannot be empty".to_string()),
+            });
+        }
+
+        // Security check
+        if !self.security.is_command_allowed(command) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Command blocked by security policy".to_string()),
+            });
+        }
+
+        // Execute with timeout
+        let timeout = Duration::from_secs(SHELL_TIMEOUT_SECS);
+        match tokio::time::timeout(timeout, self.runtime.execute_command(command)).await {
+            Ok(Ok(output)) => {
+                let mut output = output;
+                if output.len() > MAX_OUTPUT_BYTES {
+                    output.truncate(MAX_OUTPUT_BYTES);
+                    output.push_str("\n[Output truncated]");
+                }
+                Ok(ToolResult {
+                    success: true,
+                    output,
+                    error: None,
+                })
+            }
+            Ok(Err(e)) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Execution failed: {}", e)),
+            }),
+            Err(_) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Command timed out".to_string()),
+            }),
+        }
+    }
+}
+```
+
+## Factory Registration
+
+Register your tool in the agent's tool registry:
+
+```rust
+// src/tools/mod.rs
+pub fn create_tool_registry(
+    security: Arc<SecurityPolicy>,
+    runtime: Arc<dyn RuntimeAdapter>,
+) -> HashMap<String, Arc<dyn Tool>> {
+    let mut tools = HashMap::new();
+    
+    tools.insert(
+        "shell".to_string(),
+        Arc::new(ShellTool::new(security.clone(), runtime.clone())) as Arc<dyn Tool>
+    );
+    
+    tools.insert(
+        "file_read".to_string(),
+        Arc::new(FileReadTool::new(security.clone())) as Arc<dyn Tool>
+    );
+    
+    // ... more tools
+    
+    tools
+}
+```
+
+## Security Best Practices
+
+<Warning>
+**Input Validation:** Always validate and sanitize inputs. Never trust LLM-generated arguments blindly.
+</Warning>
+
+<Warning>
+**Command Injection:** For shell tools, validate commands against blocklists and use proper escaping. Never concatenate user input directly into shell commands.
+</Warning>
+
+<Note>
+**Timeouts:** Implement reasonable timeouts to prevent resource exhaustion from long-running operations.
+</Note>
+
+<Note>
+**Output Size:** Limit output size to prevent memory issues. Truncate large outputs with clear indicators.
+</Note>
+
+<Tip>
+**Error Messages:** Return helpful error messages in `ToolResult.error` so the LLM can understand what went wrong and retry intelligently.
+</Tip>
+
+## Parameter Extraction Patterns
+
+### String Parameter
+```rust
+let value = args
+    .get("param_name")
+    .and_then(|v| v.as_str())
+    .ok_or_else(|| anyhow::anyhow!("Missing 'param_name'"))?;
+```
+
+### Optional String Parameter
+```rust
+let value = args
+    .get("param_name")
+    .and_then(|v| v.as_str())
+    .map(ToString::to_string);
+```
+
+### Number Parameter
+```rust
+let value = args
+    .get("param_name")
+    .and_then(|v| v.as_f64())
+    .unwrap_or(10.0);
+```
+
+### Boolean Parameter
+```rust
+let value = args
+    .get("param_name")
+    .and_then(|v| v.as_bool())
+    .unwrap_or(false);
+```
+
+### Object Parameter
+```rust
+let obj = args
+    .get("param_name")
+    .and_then(|v| v.as_object())
+    .ok_or_else(|| anyhow::anyhow!("Missing object parameter"))?;
+```
+
+## Testing
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_tool_execution() {
+        let tool = MyTool::new();
+        
+        let args = serde_json::json!({
+            "param": "value"
+        });
+        
+        let result = tool.execute(args).await.unwrap();
+        assert!(result.success);
+        assert!(!result.output.is_empty());
+    }
+
+    #[test]
+    fn test_tool_spec() {
+        let tool = MyTool::new();
+        let spec = tool.spec();
+        
+        assert_eq!(spec.name, "my_tool");
+        assert!(!spec.description.is_empty());
+        assert_eq!(spec.parameters["type"], "object");
+    }
+}
+```
+
+## Related
+
+- [Provider Trait](/api/provider-trait) - LLMs that call your tools
+- [Memory Trait](/api/memory-trait) - Persistent storage for tool results
+- [Security Reference](/reference/security) - Security policies for tool execution

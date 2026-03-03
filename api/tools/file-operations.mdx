@@ -1,0 +1,172 @@
+---
+title: File Operations
+description: Read, write, and search files with workspace scoping
+---
+
+File operation tools allow agents to interact with the filesystem safely within the workspace boundary.
+
+## Available Tools
+
+<CardGroup cols={2}>
+  <Card title="file_read" icon="file">
+    Read file contents
+  </Card>
+  <Card title="file_write" icon="pen-to-square">
+    Write or create files
+  </Card>
+  <Card title="file_list" icon="list">
+    List directory contents
+  </Card>
+  <Card title="file_search" icon="magnifying-glass">
+    Search file contents with regex
+  </Card>
+</CardGroup>
+
+## file_read
+
+Read the contents of a file within the workspace.
+
+### Parameters
+
+<ParamField path="path" type="string" required>
+  Relative or absolute path to the file. Must be within workspace.
+</ParamField>
+
+### Example
+
+```json
+{
+  "path": "src/main.rs"
+}
+```
+
+### Response
+
+Returns file contents as a string. Binary files are base64-encoded.
+
+## file_write
+
+Write content to a file, creating it if it doesn't exist.
+
+### Parameters
+
+<ParamField path="path" type="string" required>
+  Relative or absolute path to the file. Must be within workspace.
+</ParamField>
+
+<ParamField path="content" type="string" required>
+  Content to write to the file
+</ParamField>
+
+### Example
+
+```json
+{
+  "path": "output.txt",
+  "content": "Hello, ZeroClaw!"
+}
+```
+
+### Response
+
+Returns success confirmation with file path.
+
+## file_list
+
+List files and directories within a path.
+
+### Parameters
+
+<ParamField path="path" type="string">
+  Directory path (defaults to workspace root)
+</ParamField>
+
+<ParamField path="recursive" type="boolean">
+  List recursively (default: false)
+</ParamField>
+
+### Example
+
+```json
+{
+  "path": "src",
+  "recursive": true
+}
+```
+
+### Response
+
+Returns list of files with metadata (name, size, type, modified time).
+
+## file_search
+
+Search for text patterns in files using regex.
+
+### Parameters
+
+<ParamField path="pattern" type="string" required>
+  Regular expression pattern to search for
+</ParamField>
+
+<ParamField path="path" type="string">
+  Directory to search (defaults to workspace root)
+</ParamField>
+
+<ParamField path="file_pattern" type="string">
+  Glob pattern to filter files (e.g., "*.rs")
+</ParamField>
+
+### Example
+
+```json
+{
+  "pattern": "fn main",
+  "file_pattern": "*.rs"
+}
+```
+
+### Response
+
+Returns matches with file path, line number, and matching text.
+
+## Security
+
+<Warning>
+  All file operations are scoped to the workspace directory. Attempts to access files outside the workspace are blocked.
+</Warning>
+
+### Path Validation
+
+- Resolves symlinks and checks canonical paths
+- Blocks `..` traversal outside workspace
+- Rejects absolute paths outside workspace
+- Prevents access to sensitive system files
+
+### File Size Limits
+
+- **Read**: 10MB maximum file size
+- **Write**: 10MB maximum content size
+- **List**: 10,000 file maximum per directory
+
+## Configuration
+
+```toml
+[security]
+file_read_enabled = true
+file_write_enabled = true
+max_file_size_mb = 10
+workspace_path = "/home/user/agent-workspace"
+```
+
+## Source Code
+
+- [`src/tools/file_read.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/file_read.rs)
+- [`src/tools/file_write.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/file_write.rs)
+- [`src/tools/file_list.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/file_list.rs)
+- [`src/tools/content_search.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/tools/content_search.rs)
+
+## Related
+
+- [Tool Trait](/api/tool-trait)
+- [Security Concepts](/concepts/security)
+- [Creating Tools](/guides/creating-tools)

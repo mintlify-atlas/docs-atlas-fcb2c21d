@@ -1,0 +1,488 @@
+---
+title: Creating Custom Channels
+description: Learn how to implement custom messaging channels for ZeroClaw
+---
+
+Channels let ZeroClaw communicate through any messaging platform. Implement the `Channel` trait, register it, and your agent works everywhere.
+
+## Overview
+
+Channels implement the `Channel` trait, which defines how messages are sent, received, and health-checked:
+
+```rust
+#[async_trait]
+pub trait Channel: Send + Sync {
+    fn name(&self) -> &str;
+    async fn send(&self, message: &str, recipient: &str) -> Result<()>;
+    async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()>;
+    async fn health_check(&self) -> bool;
+}
+```
+
+## Step-by-Step Guide
+
+<Steps>
+
+### Define Your Channel Struct
+
+Create a new file in `src/channels/` for your channel:
+
+```rust
+use anyhow::Result;
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+use crate::channels::traits::{Channel, ChannelMessage};
+
+/// Telegram Bot API channel
+pub struct TelegramChannel {
+    bot_token: String,
+    allowed_users: Vec<String>,
+    client: reqwest::Client,
+}
+
+impl TelegramChannel {
+    pub fn new(bot_token: &str, allowed_users: Vec<String>) -> Self {
+        Self {
+            bot_token: bot_token.to_string(),
+            allowed_users,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    fn api_url(&self, method: &str) -> String {
+        format!("https://api.telegram.org/bot{}/{method}", self.bot_token)
+    }
+}
+```
+
+### Implement Channel Methods
+
+#### Name
+
+Return a unique identifier for your channel:
+
+```rust
+fn name(&self) -> &str {
+    "telegram"
+}
+```
+
+#### Send
+
+Send messages to users:
+
+```rust
+async fn send(&self, message: &str, chat_id: &str) -> Result<()> {
+    self.client
+        .post(self.api_url("sendMessage"))
+        .json(&serde_json::json!({
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+        }))
+        .send()
+        .await?;
+    Ok(())
+}
+```
+
+#### Listen
+
+Receive and forward messages to the agent:
+
+```rust
+async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()> {
+    let mut offset: i64 = 0;
+
+    loop {
+        let resp = self
+            .client
+            .get(self.api_url("getUpdates"))
+            .query(&[("offset", offset.to_string()), ("timeout", "30".into())])
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        if let Some(updates) = resp["result"].as_array() {
+            for update in updates {
+                if let Some(msg) = update.get("message") {
+                    let sender = msg["from"]["username"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    // Check allowlist
+                    if !self.allowed_users.is_empty() 
+                        && !self.allowed_users.contains(&sender) {
+                        continue;
+                    }
+
+                    let chat_id = msg["chat"]["id"].to_string();
+
+                    let channel_msg = ChannelMessage {
+                        id: msg["message_id"].to_string(),
+                        sender,
+                        reply_target: chat_id,
+                        content: msg["text"].as_str().unwrap_or("").to_string(),
+                        channel: "telegram".into(),
+                        timestamp: msg["date"].as_u64().unwrap_or(0),
+                    };
+
+                    if tx.send(channel_msg).await.is_err() {
+                        return Ok(()); // Channel closed
+                    }
+                }
+                offset = update["update_id"].as_i64().unwrap_or(offset) + 1;
+            }
+        }
+    }
+}
+```
+
+#### Health Check
+
+Verify connectivity:
+
+```rust
+async fn health_check(&self) -> bool {
+    self.client
+        .get(self.api_url("getMe"))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+```
+
+### Add Configuration Schema
+
+Add your channel config to `src/config/schema.rs`:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    pub bot_token: String,
+    pub allowed_users: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelsConfig {
+    pub telegram: Option<TelegramConfig>,
+    // ... other channels
+}
+```
+
+### Register Your Channel
+
+Add initialization logic to `src/channels/mod.rs`:
+
+```rust
+pub fn create_channels(config: &ChannelsConfig) -> Vec<Box<dyn Channel>> {
+    let mut channels: Vec<Box<dyn Channel>> = Vec::new();
+
+    if let Some(ref telegram) = config.telegram {
+        channels.push(Box::new(TelegramChannel::new(
+            &telegram.bot_token,
+            telegram.allowed_users.clone(),
+        )));
+    }
+
+    // ... other channels
+
+    channels
+}
+```
+
+### Configure and Test
+
+Add your channel to `config.toml`:
+
+```toml
+[channels.telegram]
+bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+allowed_users = ["your_username"]
+```
+
+Test your channel:
+
+```bash
+zeroclaw daemon
+# Send a message via Telegram to your bot
+```
+
+</Steps>
+
+## Complete Example
+
+Here's the full implementation from `examples/custom_channel.rs`:
+
+```rust
+use anyhow::Result;
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+
+#[derive(Debug, Clone)]
+pub struct ChannelMessage {
+    pub id: String,
+    pub sender: String,
+    pub reply_target: String,
+    pub content: String,
+    pub channel: String,
+    pub timestamp: u64,
+}
+
+#[async_trait]
+pub trait Channel: Send + Sync {
+    fn name(&self) -> &str;
+    async fn send(&self, message: &str, recipient: &str) -> Result<()>;
+    async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()>;
+    async fn health_check(&self) -> bool;
+}
+
+pub struct TelegramChannel {
+    bot_token: String,
+    allowed_users: Vec<String>,
+    client: reqwest::Client,
+}
+
+impl TelegramChannel {
+    pub fn new(bot_token: &str, allowed_users: Vec<String>) -> Self {
+        Self {
+            bot_token: bot_token.to_string(),
+            allowed_users,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    fn api_url(&self, method: &str) -> String {
+        format!("https://api.telegram.org/bot{}/{method}", self.bot_token)
+    }
+}
+
+#[async_trait]
+impl Channel for TelegramChannel {
+    fn name(&self) -> &str {
+        "telegram"
+    }
+
+    async fn send(&self, message: &str, chat_id: &str) -> Result<()> {
+        self.client
+            .post(self.api_url("sendMessage"))
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+            }))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()> {
+        let mut offset: i64 = 0;
+
+        loop {
+            let resp = self
+                .client
+                .get(self.api_url("getUpdates"))
+                .query(&[("offset", offset.to_string()), ("timeout", "30".into())])
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await?;
+
+            if let Some(updates) = resp["result"].as_array() {
+                for update in updates {
+                    if let Some(msg) = update.get("message") {
+                        let sender = msg["from"]["username"]
+                            .as_str()
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        if !self.allowed_users.is_empty() 
+                            && !self.allowed_users.contains(&sender) {
+                            continue;
+                        }
+
+                        let chat_id = msg["chat"]["id"].to_string();
+
+                        let channel_msg = ChannelMessage {
+                            id: msg["message_id"].to_string(),
+                            sender,
+                            reply_target: chat_id,
+                            content: msg["text"].as_str().unwrap_or("").to_string(),
+                            channel: "telegram".into(),
+                            timestamp: msg["date"].as_u64().unwrap_or(0),
+                        };
+
+                        if tx.send(channel_msg).await.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    offset = update["update_id"].as_i64().unwrap_or(offset) + 1;
+                }
+            }
+        }
+    }
+
+    async fn health_check(&self) -> bool {
+        self.client
+            .get(self.api_url("getMe"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+}
+```
+
+## Advanced Features
+
+### Webhook-Based Channels
+
+For platforms that support webhooks, implement webhook handlers instead of long-polling:
+
+```rust
+// In your gateway route (src/gateway/mod.rs)
+async fn handle_telegram_webhook(
+    State(state): State<AppState>,
+    Json(update): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if let Some(msg) = update.get("message") {
+        let content = msg["text"].as_str().unwrap_or("");
+        let chat_id = msg["chat"]["id"].to_string();
+        
+        // Process message and send response
+        let response = run_gateway_chat(state, content).await?;
+        state.telegram.send(&response, &chat_id).await?;
+    }
+    
+    Json(serde_json::json!({"ok": true}))
+}
+```
+
+### Message Threading
+
+Support threaded conversations:
+
+```rust
+pub struct ChannelMessage {
+    pub id: String,
+    pub sender: String,
+    pub reply_target: String,
+    pub content: String,
+    pub channel: String,
+    pub timestamp: u64,
+    pub thread_ts: Option<String>, // Thread timestamp
+}
+```
+
+### Rich Content
+
+Handle images, files, and other media:
+
+```rust
+pub enum MessageContent {
+    Text(String),
+    Image { url: String, caption: Option<String> },
+    File { url: String, filename: String },
+}
+
+pub struct ChannelMessage {
+    pub id: String,
+    pub sender: String,
+    pub reply_target: String,
+    pub content: MessageContent,
+    pub channel: String,
+    pub timestamp: u64,
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Implement robust error handling">
+    Handle network failures gracefully:
+    
+    ```rust
+    async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()> {
+        loop {
+            match self.fetch_updates().await {
+                Ok(updates) => self.process_updates(updates, &tx).await?,
+                Err(e) => {
+                    tracing::warn!("Channel error: {e}");
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
+            }
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use allowlists for security">
+    Always validate senders:
+    
+    ```rust
+    if !self.allowed_users.contains(&sender) {
+        tracing::warn!("Rejected message from {sender}");
+        continue;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Handle rate limits">
+    Respect API rate limits:
+    
+    ```rust
+    use tokio::time::{sleep, Duration};
+    
+    if resp.status() == 429 {
+        let retry_after = resp.headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(60);
+        sleep(Duration::from_secs(retry_after)).await;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Test with mock APIs">
+    Use wiremock or similar for testing:
+    
+    ```rust
+    #[tokio::test]
+    async fn test_telegram_send() {
+        let mock_server = MockServer::start().await;
+        
+        Mock::given(method("POST"))
+            .and(path("/sendMessage"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true})))
+            .mount(&mock_server)
+            .await;
+        
+        let channel = TelegramChannel::new_with_base_url(
+            "test_token",
+            vec![],
+            &mock_server.uri(),
+        );
+        
+        channel.send("test", "123").await.unwrap();
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gateway Setup" icon="server" href="/guides/gateway-setup">
+    Configure webhook endpoints for your channel
+  </Card>
+  <Card title="Creating Tools" icon="wrench" href="/guides/creating-tools">
+    Give your agent new capabilities
+  </Card>
+</CardGroup>

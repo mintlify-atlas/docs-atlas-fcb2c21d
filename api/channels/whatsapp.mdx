@@ -1,0 +1,491 @@
+---
+title: WhatsApp Channel
+description: WhatsApp Business Cloud API channel with webhook support
+---
+
+# WhatsApp Channel
+
+The WhatsApp channel enables ZeroClaw to communicate via WhatsApp Business Cloud API using Meta's official platform with webhook-based message delivery.
+
+## Overview
+
+- **Channel Name**: `whatsapp`
+- **Transport**: Webhook (push-based)
+- **Authentication**: Access token (Meta Business)
+- **Public Port Required**: Yes (HTTPS webhook endpoint)
+- **Supports**: Text messages, phone number allowlist
+
+## Configuration
+
+### Required Settings
+
+```toml
+[channels_config.whatsapp]
+access_token = "EAAB..."
+phone_number_id = "123456789012345"
+verify_token = "your-verify-token"
+allowed_numbers = ["*"]
+```
+
+### Complete Configuration
+
+```toml
+[channels_config.whatsapp]
+access_token = "EAAB..."  # Meta Business access token
+phone_number_id = "123456789012345"  # WhatsApp Business phone number ID
+verify_token = "your-verify-token"  # Webhook verification token
+allowed_numbers = ["+1234567890", "*"]  # E.164 format phone numbers
+```
+
+### Environment Variables
+
+```bash
+ZEROCLAW_WHATSAPP_ACCESS_TOKEN=EAAB...
+ZEROCLAW_WHATSAPP_PHONE_NUMBER_ID=123456789012345
+ZEROCLAW_WHATSAPP_VERIFY_TOKEN=your-verify-token
+```
+
+## Setup
+
+### Prerequisites
+
+1. **Meta Business Account**: Create at [business.facebook.com](https://business.facebook.com)
+2. **WhatsApp Business App**: Register in Meta Business Settings
+3. **Phone Number**: Add and verify a business phone number
+4. **Public HTTPS Endpoint**: Required for webhook callbacks
+
+### Getting Access Token
+
+1. Go to [Meta for Developers](https://developers.facebook.com/)
+2. Create new app (Business type)
+3. Add "WhatsApp" product
+4. Go to API Settings
+5. Generate **Temporary Access Token** (24 hours) or **Permanent Token**:
+   - Navigate to System Users (Business Settings)
+   - Create system user
+   - Assign WhatsApp permissions
+   - Generate token
+
+### Getting Phone Number ID
+
+1. In WhatsApp Business settings
+2. Find your phone number
+3. Copy the **Phone Number ID** (not the actual phone number)
+
+### Webhook Setup
+
+1. In WhatsApp product settings, go to Configuration
+2. Set Callback URL: `https://your-domain.com/whatsapp`
+3. Set Verify Token: Choose a secure random string
+4. Subscribe to webhook fields:
+   - `messages` (required)
+5. Verify webhook (Meta will send GET request)
+6. Start receiving POST requests
+
+**Webhook Verification**:
+Meta sends:
+```http
+GET /whatsapp?hub.mode=subscribe&hub.challenge=123456&hub.verify_token=your-token
+```
+
+ZeroClaw responds with `hub.challenge` if `hub.verify_token` matches.
+
+## Features
+
+### Webhook Mode (Push-Based)
+
+Unlike polling channels, WhatsApp uses webhooks:
+
+**Incoming Message Flow**:
+1. User sends WhatsApp message to your business number
+2. Meta WhatsApp API sends POST request to your webhook endpoint
+3. ZeroClaw validates webhook signature (if configured)
+4. Parses webhook payload
+5. Checks allowlist
+6. Converts to `ChannelMessage`
+7. Sends to agent for processing
+
+**No Active Polling**:
+- The `listen()` method keeps channel alive but doesn't poll
+- Actual message delivery happens via gateway webhook handler
+
+### Phone Number Allowlist
+
+#### E.164 Format Required
+
+All phone numbers must use E.164 international format:
+```
++[country code][number]
+```
+
+Examples:
+- US: `+1234567890`
+- UK: `+447911123456`
+- India: `+919876543210`
+
+#### Configuration
+
+**Allow All** (testing only):
+```toml
+allowed_numbers = ["*"]
+```
+
+**Specific Numbers**:
+```toml
+allowed_numbers = [
+    "+1234567890",
+    "+447911123456"
+]
+```
+
+**Automatic Normalization**:
+Incoming numbers without `+` prefix are normalized:
+```
+1234567890 → +1234567890
+```
+
+### Message Type Support
+
+#### Supported (Current)
+
+- **Text messages**: Full support
+
+#### Unsupported (Skipped)
+
+- Images
+- Audio/Voice
+- Video
+- Documents
+- Stickers
+- Locations
+- Contacts
+- Reactions
+
+Future versions will add multimedia support.
+
+### Webhook Payload Parsing
+
+Meta sends nested JSON structure:
+
+```json
+{
+  "object": "whatsapp_business_account",
+  "entry": [{
+    "id": "...",
+    "changes": [{
+      "value": {
+        "messaging_product": "whatsapp",
+        "metadata": {...},
+        "messages": [{
+          "from": "1234567890",
+          "id": "wamid.xxx",
+          "timestamp": "1699999999",
+          "type": "text",
+          "text": {
+            "body": "Hello ZeroClaw!"
+          }
+        }]
+      },
+      "field": "messages"
+    }]
+  }]
+}
+```
+
+**Extraction**:
+1. Navigate: `entry[].changes[].value.messages[]`
+2. Get sender: `from` field
+3. Normalize: Add `+` prefix if missing
+4. Check allowlist
+5. Extract text: `text.body`
+6. Get timestamp: `timestamp` (Unix seconds)
+7. Create `ChannelMessage`
+
+### HTTPS Security
+
+All API calls enforce HTTPS:
+
+```rust
+fn ensure_https(url: &str) -> Result<()> {
+    if !url.starts_with("https://") {
+        bail!("Refusing to transmit over non-HTTPS URL");
+    }
+    Ok(())
+}
+```
+
+**Checked Endpoints**:
+- Message send: `https://graph.facebook.com/v18.0/{phone_number_id}/messages`
+- Health check: `https://graph.facebook.com/v18.0/{phone_number_id}`
+
+## Implementation Details
+
+### Source Location
+
+`src/channels/whatsapp.rs` (1140 lines)
+
+### Key Components
+
+#### WhatsAppChannel Struct
+
+```rust
+pub struct WhatsAppChannel {
+    access_token: String,
+    endpoint_id: String,  // phone_number_id
+    verify_token: String,
+    allowed_numbers: Vec<String>,
+}
+```
+
+#### Gateway Integration
+
+Webhook handler in gateway:
+```rust
+// src/gateway/mod.rs
+POST /whatsapp
+→ verify signature (if configured)
+→ channel.parse_webhook_payload(body)
+→ send messages to agent
+```
+
+### API Endpoints Used
+
+| Method | Endpoint | Purpose |
+|--------|----------|--------|
+| POST | `/v18.0/{phone_number_id}/messages` | Send messages |
+| GET | `/v18.0/{phone_number_id}` | Health check |
+
+### Message Send Format
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "recipient_type": "individual",
+  "to": "1234567890",
+  "type": "text",
+  "text": {
+    "preview_url": false,
+    "body": "Hello from ZeroClaw!"
+  }
+}
+```
+
+**Note**: Recipient number has `+` prefix stripped for API.
+
+### Error Handling
+
+API errors are sanitized:
+
+```rust
+let sanitized = crate::providers::sanitize_api_error(&error);
+tracing::error!("WhatsApp send failed: {status} — {sanitized}");
+```
+
+Removes:
+- Access tokens
+- Sensitive headers
+- Internal details
+
+## Common Errors
+
+### Webhook Verification Failed
+
+```
+WhatsApp webhook verification failed — token mismatch
+```
+
+**Cause**: `verify_token` doesn't match Meta's expected value
+
+**Solution**:
+1. Check token in Meta webhook settings
+2. Update config:
+   ```toml
+   verify_token = "exact-token-from-meta"
+   ```
+3. Restart daemon
+
+### Unauthorized Number
+
+```
+WhatsApp: ignoring message from unauthorized number: +9999999999.
+Add to channels.whatsapp.allowed_numbers in config.toml
+```
+
+**Solution**:
+```toml
+allowed_numbers = ["+9999999999"]
+```
+
+### API Error 401
+
+```
+WhatsApp API error: 401
+```
+
+**Cause**: Invalid or expired access token
+
+**Solution**:
+1. Generate new permanent token (System User method)
+2. Update config:
+   ```toml
+   access_token = "EAAB..."
+   ```
+
+### API Error 403
+
+```
+WhatsApp API error: 403
+```
+
+**Cause**: Insufficient permissions
+
+**Solution**:
+- Verify WhatsApp Business Account is active
+- Check phone number is verified
+- Ensure System User has `whatsapp_business_messaging` permission
+
+### Webhook Not Receiving Messages
+
+**Check Webhook URL**:
+```bash
+curl -I https://your-domain.com/whatsapp
+# Should return 200 or 405 (Method Not Allowed for GET)
+```
+
+**Check Firewall**: Ensure port 443 (HTTPS) is open
+
+**Check Logs**:
+```bash
+RUST_LOG=info zeroclaw daemon 2>&1 | grep -i whatsapp
+```
+
+Look for:
+- `WhatsApp channel active (webhook mode).`
+- `WhatsApp: ignoring message from unauthorized number:`
+- `WhatsApp webhook verified successfully`
+
+**Test Webhook**:
+Send test message from your phone to business number.
+
+## Best Practices
+
+1. **Use Permanent Token**: Generate via System User, not temporary 24h token
+2. **Secure Verify Token**: Use long random string (32+ chars)
+3. **HTTPS Required**: Never use HTTP for webhook
+4. **Allowlist Numbers**: Start with `*`, then restrict to known users
+5. **Monitor Quota**: Meta has message limits (check Business Manager)
+6. **Phone Number Verification**: Ensure business number is verified
+7. **Error Monitoring**: Watch logs for API errors
+
+## Troubleshooting
+
+### No Messages Received
+
+**1. Check Gateway**:
+```bash
+curl -X POST https://your-domain.com/whatsapp \
+  -H "Content-Type: application/json" \
+  -d '{"object": "whatsapp_business_account"}'
+```
+
+**2. Check Webhook Subscription**:
+In Meta settings, verify `messages` field is subscribed.
+
+**3. Check Allowlist**:
+```toml
+allowed_numbers = ["*"]  # Temporarily allow all
+```
+
+**4. Check Phone Format**:
+Must be E.164: `+1234567890`
+
+### Messages Not Sending
+
+**1. Verify Access Token**:
+```bash
+curl -H "Authorization: Bearer $ACCESS_TOKEN" \
+  https://graph.facebook.com/v18.0/$PHONE_NUMBER_ID
+```
+
+**2. Check Recipient Number**:
+Must be registered WhatsApp user.
+
+**3. Check Message Limits**:
+Meta enforces rate limits and daily quotas.
+
+**4. Test with API Explorer**:
+Use Meta's Graph API Explorer to test send.
+
+## Performance
+
+### Message Latency
+
+**Inbound**:
+- Webhook delivery: &lt;1 second (Meta → your server)
+- Processing: Depends on agent/provider
+- Total: Usually &lt;5 seconds
+
+**Outbound**:
+- API call: &lt;500ms (your server → Meta)
+- WhatsApp delivery: &lt;2 seconds (Meta → recipient)
+- Total: Usually &lt;3 seconds
+
+### Scalability
+
+**Webhook Concurrency**:
+- Gateway handles multiple concurrent webhooks
+- Each message processed independently
+
+**Rate Limits**:
+- Meta enforces per-number limits
+- Check Business Manager for current quota
+- Tier 1 (default): 1,000 messages/day
+- Higher tiers: Request from Meta
+
+## Security
+
+### Access Token Protection
+
+- Never log access tokens
+- Sanitized from error messages
+- Store in config with restricted permissions: `chmod 600 config.toml`
+
+### Webhook Verification
+
+**GET Request** (initial setup):
+```
+hub.verify_token == config.verify_token → respond with hub.challenge
+```
+
+**POST Request** (message delivery):
+- Verify `hub.verify_token` if signature checking is implemented
+- Check `allowed_numbers` allowlist
+
+### HTTPS Enforcement
+
+- All API calls use HTTPS
+- Webhook endpoint must be HTTPS
+- Certificate validation enabled
+
+## Comparison with WhatsApp Web Mode
+
+ZeroClaw also supports WhatsApp Web mode (requires `--features whatsapp-web`):
+
+| Feature | Cloud API (this doc) | Web Mode |
+|---------|---------------------|----------|
+| Setup | Business account required | QR code pairing |
+| Transport | Webhook (HTTPS) | WebSocket |
+| Public endpoint | Required | Not required |
+| Official | Yes (Meta) | No (reverse-engineered) |
+| Rate limits | Enforced by Meta | Less strict |
+| Multimedia | Limited (text only now) | Full support |
+| Best for | Production/business | Personal/testing |
+
+Use Cloud API for production, Web mode for personal/testing.
+
+## See Also
+
+- [Channels Reference](/docs/channels-reference)
+- [WhatsApp Business Platform](https://developers.facebook.com/docs/whatsapp)
+- [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api)
+- [Gateway Configuration](/configuration/gateway)

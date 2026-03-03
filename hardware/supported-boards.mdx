@@ -1,0 +1,354 @@
+---
+title: Supported Boards
+description: Complete list of hardware platforms supported by ZeroClaw
+---
+
+# Supported Boards
+
+ZeroClaw supports a wide range of microcontrollers and single-board computers. Each board has different capabilities, transport protocols, and use cases.
+
+## Board Comparison
+
+| Board | Architecture | Transport | GPIO | ADC | I2C/SPI | Flash Tool | Status |
+|-------|--------------|-----------|------|-----|---------|------------|--------|
+| **Raspberry Pi** | ARM (all models) | Native | ✅ | ✅ | ✅ | N/A (native) | ✅ Stable |
+| **STM32 Nucleo-F401RE** | ARM Cortex-M4 | USB Serial | ✅ | ✅ | ✅ | OpenOCD | ✅ Stable |
+| **Arduino Uno** | ATmega328P | USB Serial | ✅ | ✅ | ✅ | avrdude | ✅ Stable |
+| **Arduino Uno R4 WiFi** | RA4M1 + ESP32 | USB Serial / Bridge | ✅ | ✅ | ✅ | Custom | ✅ Stable |
+| **ESP32 (RISC-V)** | ESP32-C3, C2 | Serial / WiFi | ✅ | ✅ | ✅ | espflash | ✅ Stable |
+| **ESP32 (Xtensa)** | ESP32, S2, S3 | Serial / WiFi | ✅ | ✅ | ✅ | espflash | 🚧 Experimental |
+
+## Raspberry Pi
+
+### Models Supported
+- Raspberry Pi 5 (8GB recommended for robots)
+- Raspberry Pi 4 (4GB+)
+- Raspberry Pi 3 B+
+- Raspberry Pi Zero W (ARMv6, requires special build)
+- Raspberry Pi Zero 2 W
+
+### Features
+- **GPIO:** 40-pin header, BCM pin numbering
+- **Transport:** Native (rppal library)
+- **Firmware:** None required (ZeroClaw runs directly on Pi)
+- **Use Cases:** Edge-native AI, autonomous robots, production deployments
+
+### Configuration
+
+```toml
+[[peripherals.boards]]
+board = "rpi-gpio"
+transport = "native"
+```
+
+### Build Requirements
+
+```bash
+# Enable peripheral-rpi feature
+cargo build --features peripheral-rpi
+
+# For Pi Zero W (ARMv6)
+cargo build --release --target armv6l-unknown-linux-musleabihf --features peripheral-rpi
+```
+
+<Card title="Raspberry Pi Setup" icon="raspberry-pi" href="/hardware/peripherals/raspberry-pi">
+  Detailed Raspberry Pi setup guide
+</Card>
+
+## STM32 Nucleo
+
+### Models Supported
+- **Nucleo-F401RE** (primary support)
+- Other STM32 Nucleo boards (experimental)
+
+### Features
+- **GPIO:** Arduino-compatible headers + Morpho connectors
+- **Architecture:** ARM Cortex-M4, 84 MHz
+- **Transport:** USB Serial (ST-LINK VCP)
+- **Firmware:** `firmware/zeroclaw-nucleo/`
+- **Use Cases:** Embedded development, rapid prototyping
+
+### VID/PID
+- **Vendor ID:** 0x0483 (STMicroelectronics)
+- **Product ID:** 0x374b (ST-LINK/V2.1)
+
+### Configuration
+
+```toml
+[[peripherals.boards]]
+board = "nucleo-f401re"
+transport = "serial"
+path = "/dev/ttyACM0"  # or /dev/cu.usbmodem* on macOS
+baud = 115200
+```
+
+### Flashing Firmware
+
+```bash
+# Auto-flash via OpenOCD
+zeroclaw peripheral flash-nucleo
+
+# Manual flash
+cd firmware/zeroclaw-nucleo
+cargo build --release
+openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
+  -c "program target/thumbv7em-none-eabihf/release/zeroclaw-nucleo verify reset exit"
+```
+
+<Card title="STM32 Nucleo Setup" icon="microchip" href="/hardware/peripherals/stm32-nucleo">
+  Detailed STM32 Nucleo setup guide
+</Card>
+
+## Arduino
+
+### Models Supported
+- **Arduino Uno** (ATmega328P)
+- **Arduino Uno R4 WiFi** (RA4M1 + ESP32-S3)
+
+### Arduino Uno (Classic)
+
+**Features:**
+- **GPIO:** 14 digital pins (6 PWM), 6 analog inputs
+- **Architecture:** AVR ATmega328P, 16 MHz
+- **Transport:** USB Serial (CH340 or ATmega16U2)
+- **Firmware:** `firmware/zeroclaw-arduino/zeroclaw-arduino.ino`
+- **Use Cases:** Education, simple projects
+
+**VID/PID:**
+- CH340: 0x1a86:0x7523
+- ATmega16U2: 0x2341:0x0043
+
+**Configuration:**
+```toml
+[[peripherals.boards]]
+board = "arduino-uno"
+transport = "serial"
+path = "/dev/ttyUSB0"  # or /dev/cu.usbserial-* on macOS
+baud = 115200
+```
+
+**Flashing:**
+```bash
+# Via ZeroClaw (uses avrdude)
+zeroclaw peripheral flash --port /dev/ttyUSB0
+
+# Via Arduino IDE
+# 1. Open firmware/zeroclaw-arduino/zeroclaw-arduino.ino
+# 2. Select Board: Arduino Uno
+# 3. Select Port
+# 4. Upload
+```
+
+### Arduino Uno R4 WiFi (Uno Q)
+
+**Features:**
+- **GPIO:** 14 digital pins, 6 analog inputs
+- **Architecture:** Renesas RA4M1 (ARM Cortex-M4, 48 MHz)
+- **WiFi:** ESP32-S3 co-processor
+- **Transport:** Bridge (WebSocket to Arduino Cloud)
+- **Use Cases:** IoT projects, remote control
+
+**Configuration:**
+```toml
+[[peripherals.boards]]
+board = "arduino-uno-q"
+transport = "bridge"
+```
+
+**Setup:**
+```bash
+zeroclaw peripheral setup-uno-q --host robot.local
+```
+
+<Card title="Arduino Setup" icon="arduino" href="/hardware/peripherals/arduino">
+  Detailed Arduino setup guide
+</Card>
+
+## ESP32
+
+### Variants Supported
+
+#### ESP32-C3 / ESP32-C2 (RISC-V) — Recommended
+- **Architecture:** RISC-V 32-bit, 160 MHz
+- **Transport:** Serial (USB CDC)
+- **Firmware:** `firmware/zeroclaw-esp32/` (Rust, ESP-IDF)
+- **Status:** ✅ Stable
+
+#### ESP32 / ESP32-S2 / ESP32-S3 (Xtensa)
+- **Architecture:** Xtensa 32-bit, 240 MHz
+- **Transport:** Serial
+- **Firmware:** Same, requires espup toolchain
+- **Status:** 🚧 Experimental
+
+### Features
+- **GPIO:** 34+ pins (varies by model)
+- **WiFi:** 802.11 b/g/n
+- **Bluetooth:** Classic + BLE (ESP32 classic)
+- **Use Cases:** IoT, edge-native AI (future)
+
+### VID/PID
+- **CH340 USB-UART:** 0x1a86:0x7523
+- **CP2102 USB-UART:** 0x10c4:0xea60
+
+### Configuration
+
+```toml
+[[peripherals.boards]]
+board = "esp32"
+transport = "serial"
+path = "/dev/ttyUSB0"  # or /dev/cu.SLAB_USBtoUART
+baud = 115200
+```
+
+### Building Firmware
+
+```bash
+cd firmware/zeroclaw-esp32
+
+# RISC-V (C3, C2) - uses nightly Rust + build-std
+export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"
+cargo build --release
+
+# Xtensa (ESP32, S2, S3) - requires espup
+cargo install espup espflash
+espup install
+source ~/export-esp.sh
+cargo build --release --target xtensa-esp32-espidf
+```
+
+### Flashing
+
+```bash
+# RISC-V
+espflash flash target/riscv32imc-esp-espidf/release/zeroclaw-esp32 --monitor
+
+# Xtensa
+espflash flash target/xtensa-esp32-espidf/release/zeroclaw-esp32 --monitor
+```
+
+<Card title="ESP32 Setup" icon="microchip" href="/hardware/peripherals/esp32">
+  Detailed ESP32 setup guide
+</Card>
+
+## Pin Mapping Reference
+
+### Arduino Uno
+```
+Digital: 0-13 (0,1 = Serial)
+PWM:     3, 5, 6, 9, 10, 11
+Analog:  A0-A5
+LED:     Pin 13 (built-in)
+```
+
+### Raspberry Pi (40-pin header, BCM numbering)
+```
+GPIO:  2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+       16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27
+I2C:   GPIO 2 (SDA), GPIO 3 (SCL)
+SPI:   GPIO 9 (MISO), GPIO 10 (MOSI), GPIO 11 (SCLK)
+PWM:   GPIO 12, 13, 18, 19
+```
+
+### ESP32-C3
+```
+GPIO:  0-21 (varies by dev board)
+UART:  GPIO 20 (RX), GPIO 21 (TX)
+I2C:   GPIO 8 (SDA), GPIO 9 (SCL)
+SPI:   GPIO 2 (MOSI), GPIO 3 (MISO), GPIO 4 (SCLK)
+LED:   GPIO 2 (built-in on some boards)
+```
+
+### STM32 Nucleo-F401RE
+```
+Arduino headers: D0-D15, A0-A5
+Morpho connectors: Full pin access
+LED: PA5 (LD2, Arduino D13 equivalent)
+Button: PC13 (USER button)
+```
+
+## Board Selection Guide
+
+### Choose Raspberry Pi if:
+- Running edge-native AI agents
+- Need full Linux environment
+- Building autonomous robots
+- Want offline LLM inference (Ollama)
+
+### Choose STM32 Nucleo if:
+- Embedded development with real-time constraints
+- Learning ARM Cortex-M architecture
+- Need precise timing or low-level control
+- Prototyping custom PCBs
+
+### Choose Arduino if:
+- Education or hobby projects
+- Simple GPIO control
+- Quick prototyping
+- Large ecosystem of shields/libraries
+
+### Choose ESP32 if:
+- IoT projects with WiFi
+- Battery-powered applications
+- Remote sensing/control
+- Future edge-native AI (in development)
+
+## Adding New Boards
+
+To add support for a new board:
+
+1. **Implement the `Peripheral` trait** in `src/peripherals/`
+2. **Write firmware** (if serial transport) in `firmware/`
+3. **Add board type** to config schema
+4. **Add VID/PID** to hardware registry
+5. **Document** in `docs/datasheets/`
+
+See [Adding Boards and Tools](/contributing/adding-boards-and-tools) for details.
+
+## Troubleshooting
+
+### Board not detected
+
+```bash
+# List USB devices
+lsusb  # Linux
+system_profiler SPUSBDataType  # macOS
+
+# Check serial permissions
+ls -la /dev/tty*
+sudo usermod -aG dialout $USER  # Linux
+```
+
+### Serial connection fails
+
+- Verify baud rate matches firmware (usually 115200)
+- Check port path (`/dev/ttyUSB0` vs `/dev/ttyACM0`)
+- Ensure firmware is flashed correctly
+- Try unplugging/replugging USB cable
+
+### GPIO operation fails on Raspberry Pi
+
+```bash
+# Check GPIO permissions
+groups  # should include 'gpio'
+sudo usermod -aG gpio $USER
+
+# Verify rppal feature is enabled
+cargo build --features peripheral-rpi
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Raspberry Pi" icon="raspberry-pi" href="/hardware/peripherals/raspberry-pi">
+    Set up Raspberry Pi GPIO
+  </Card>
+  <Card title="STM32 Nucleo" icon="microchip" href="/hardware/peripherals/stm32-nucleo">
+    Set up STM32 Nucleo board
+  </Card>
+  <Card title="Arduino" icon="arduino" href="/hardware/peripherals/arduino">
+    Set up Arduino board
+  </Card>
+  <Card title="ESP32" icon="microchip" href="/hardware/peripherals/esp32">
+    Set up ESP32 board
+  </Card>
+</CardGroup>

@@ -1,0 +1,425 @@
+---
+title: Peripheral Trait
+description: Core trait for implementing hardware peripherals in ZeroClaw
+---
+
+The `Peripheral` trait defines the interface for hardware peripherals in ZeroClaw. Implement this trait to integrate physical devices like microcontrollers (STM32, Arduino), GPIO boards (Raspberry Pi), sensors, and actuators as agent-controllable capabilities.
+
+## Overview
+
+Peripherals are the agent's "arms and legs" - remote devices that run minimal firmware and expose hardware capabilities as tools. The agent connects to peripherals, retrieves their tool definitions, and can invoke hardware functions just like software tools.
+
+## Trait Definition
+
+```rust
+use async_trait::async_trait;
+use crate::tools::Tool;
+
+#[async_trait]
+pub trait Peripheral: Send + Sync {
+    fn name(&self) -> &str;
+    fn board_type(&self) -> &str;
+    async fn connect(&mut self) -> anyhow::Result<()>;
+    async fn disconnect(&mut self) -> anyhow::Result<()>;
+    async fn health_check(&self) -> bool;
+    fn tools(&self) -> Vec<Box<dyn Tool>>;
+}
+```
+
+## Required Methods
+
+### `name`
+
+Return the human-readable instance name of this peripheral.
+
+<ResponseField name="name" type="&str">
+  Unique instance identifier including index or serial (e.g., "nucleo-f401re-0", "rpi-gpio-hat-1")
+</ResponseField>
+
+**Note:** Must uniquely identify the specific device instance when multiple boards of the same type are connected.
+
+### `board_type`
+
+Return the board type identifier.
+
+<ResponseField name="board_type" type="&str">
+  Stable lowercase identifier (e.g., "nucleo-f401re", "rpi-gpio")
+</ResponseField>
+
+**Note:** Must match the key used in config schema's peripheral section.
+
+### `connect`
+
+Establish a connection to the peripheral hardware.
+
+<ResponseField name="Result" type="anyhow::Result<()>">
+  Success or error
+</ResponseField>
+
+**Responsibilities:**
+- Open underlying transport (serial port, GPIO bus, I²C, etc.)
+- Perform initialization handshake with firmware
+- Verify device is ready for commands
+
+**Example actions:**
+- Open `/dev/ttyACM0` at 115200 baud for STM32
+- Export GPIO pins via sysfs for Raspberry Pi
+- Perform version check handshake with firmware
+
+### `disconnect`
+
+Disconnect from the peripheral and release all resources.
+
+<ResponseField name="Result" type="anyhow::Result<()>">
+  Success or error
+</ResponseField>
+
+**Responsibilities:**
+- Close serial ports
+- Unexport GPIO pins
+- Perform safe shutdown sequence
+- Release any held locks or file descriptors
+
+**Note:** After this call, `health_check()` should return `false` until `connect()` is called again.
+
+### `health_check`
+
+Check whether the peripheral is reachable and responsive.
+
+<ResponseField name="healthy" type="bool">
+  `true` if device responds within timeout
+</ResponseField>
+
+**Implementation:** Perform lightweight probe without altering device state (e.g., ping command, read status register).
+
+### `tools`
+
+Return the tools this peripheral exposes to the agent.
+
+<ResponseField name="tools" type="Vec<Box<dyn Tool>>">
+  Array of tool implementations that delegate to hardware
+</ResponseField>
+
+**Each tool:**
+- Implements the `Tool` trait
+- Delegates execution to underlying hardware (GPIO, sensors, actuators)
+- Handles communication protocol with firmware
+- Returns structured results to the agent
+
+**Example tools:**
+- `gpio_read` - Read digital pin state
+- `gpio_write` - Set digital pin state
+- `adc_read` - Read analog sensor value
+- `pwm_set` - Control PWM output
+- `sensor_read` - Read temperature/humidity/etc.
+
+## Implementation Example
+
+Here's a simplified STM32 Nucleo peripheral:
+
+```rust
+use async_trait::async_trait;
+use zeroclaw::peripherals::traits::Peripheral;
+use zeroclaw::tools::{Tool, ToolResult};
+use serialport::{SerialPort, SerialPortBuilder};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+pub struct NucleoF401RE {
+    name: String,
+    port_path: String,
+    port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+}
+
+impl NucleoF401RE {
+    pub fn new(name: String, port_path: String) -> Self {
+        Self {
+            name,
+            port_path,
+            port: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn send_command(&self, cmd: &str) -> anyhow::Result<String> {
+        let mut port_lock = self.port.lock().unwrap();
+        let port = port_lock
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Not connected"))?;
+
+        // Send command
+        port.write_all(cmd.as_bytes())?;
+        port.write_all(b"\n")?;
+
+        // Read response (simplified)
+        let mut buf = vec![0u8; 256];
+        let n = port.read(&mut buf)?;
+        let response = String::from_utf8_lossy(&buf[..n]).to_string();
+
+        Ok(response)
+    }
+}
+
+#[async_trait]
+impl Peripheral for NucleoF401RE {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn board_type(&self) -> &str {
+        "nucleo-f401re"
+    }
+
+    async fn connect(&mut self) -> anyhow::Result<()> {
+        let port = serialport::new(&self.port_path, 115200)
+            .timeout(Duration::from_millis(1000))
+            .open()?;
+
+        let mut port_lock = self.port.lock().unwrap();
+        *port_lock = Some(port);
+
+        // Perform handshake
+        drop(port_lock);
+        let response = self.send_command("PING")?;
+        if !response.contains("PONG") {
+            anyhow::bail!("Handshake failed: {}", response);
+        }
+
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> anyhow::Result<()> {
+        let mut port_lock = self.port.lock().unwrap();
+        *port_lock = None;
+        Ok(())
+    }
+
+    async fn health_check(&self) -> bool {
+        self.send_command("PING")
+            .map(|r| r.contains("PONG"))
+            .unwrap_or(false)
+    }
+
+    fn tools(&self) -> Vec<Box<dyn Tool>> {
+        vec![
+            Box::new(GpioReadTool::new(self.port.clone())),
+            Box::new(GpioWriteTool::new(self.port.clone())),
+        ]
+    }
+}
+
+// Example GPIO tool
+struct GpioWriteTool {
+    port: Arc<Mutex<Option<Box<dyn SerialPort>>>>,
+}
+
+impl GpioWriteTool {
+    fn new(port: Arc<Mutex<Option<Box<dyn SerialPort>>>>) -> Self {
+        Self { port }
+    }
+}
+
+#[async_trait]
+impl Tool for GpioWriteTool {
+    fn name(&self) -> &str {
+        "gpio_write"
+    }
+
+    fn description(&self) -> &str {
+        "Write digital output to GPIO pin"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pin": {
+                    "type": "number",
+                    "description": "GPIO pin number"
+                },
+                "value": {
+                    "type": "boolean",
+                    "description": "Output state (true=HIGH, false=LOW)"
+                }
+            },
+            "required": ["pin", "value"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let pin = args["pin"].as_u64().ok_or_else(|| anyhow::anyhow!("Missing pin"))?;
+        let value = args["value"].as_bool().ok_or_else(|| anyhow::anyhow!("Missing value"))?;
+
+        let cmd = format!("GPIO_WRITE {} {}", pin, if value { 1 } else { 0 });
+
+        let mut port_lock = self.port.lock().unwrap();
+        let port = port_lock
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Not connected"))?;
+
+        port.write_all(cmd.as_bytes())?;
+        port.write_all(b"\n")?;
+
+        let mut buf = vec![0u8; 256];
+        let n = port.read(&mut buf)?;
+        let response = String::from_utf8_lossy(&buf[..n]);
+
+        if response.contains("OK") {
+            Ok(ToolResult {
+                success: true,
+                output: format!("Pin {} set to {}", pin, if value { "HIGH" } else { "LOW" }),
+                error: None,
+            })
+        } else {
+            Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Command failed: {}", response)),
+            })
+        }
+    }
+}
+```
+
+## Communication Protocol
+
+Typical firmware communication pattern:
+
+```
+Agent → Firmware: PING\n
+Firmware → Agent: PONG\n
+
+Agent → Firmware: GPIO_WRITE 13 1\n
+Firmware → Agent: OK\n
+
+Agent → Firmware: GPIO_READ 12\n
+Firmware → Agent: VALUE 1\n
+
+Agent → Firmware: ADC_READ 0\n
+Firmware → Agent: VALUE 3.14\n
+```
+
+See `docs/hardware-peripherals-design.md` for complete protocol specification.
+
+## Factory Registration
+
+Register your peripheral in the factory:
+
+```rust
+// src/peripherals/mod.rs
+pub fn create_peripheral(board_type: &str, config: &PeripheralConfig) -> Box<dyn Peripheral> {
+    match board_type {
+        "nucleo-f401re" => Box::new(NucleoF401RE::new(
+            config.name.clone(),
+            config.port.clone(),
+        )),
+        "rpi-gpio" => Box::new(RaspberryPiGpio::new(config)),
+        _ => panic!("Unknown peripheral type: {}", board_type),
+    }
+}
+```
+
+## Configuration Example
+
+```toml
+[peripherals]
+enable = true
+
+[[peripherals.devices]]
+name = "nucleo-f401re-0"
+board_type = "nucleo-f401re"
+port = "/dev/ttyACM0"
+baud_rate = 115200
+
+[[peripherals.devices]]
+name = "rpi-gpio-hat-1"
+board_type = "rpi-gpio"
+base_path = "/sys/class/gpio"
+```
+
+## Lifecycle Flow
+
+1. **Startup:** Agent reads peripheral config
+2. **Factory:** Creates peripheral instances via factory
+3. **Connect:** Agent calls `connect()` on each peripheral
+4. **Tool Registration:** Agent calls `tools()` and merges into tool registry
+5. **Runtime:** LLM can invoke peripheral tools like any other tool
+6. **Health Monitoring:** Periodic `health_check()` calls
+7. **Shutdown:** Agent calls `disconnect()` on cleanup
+
+## Best Practices
+
+<Warning>
+**Hardware Safety:** Validate all parameters before sending to firmware. Invalid GPIO operations can damage hardware.
+</Warning>
+
+<Note>
+**Timeouts:** Use reasonable timeouts for serial/I²C operations (typically 100-1000ms). Hardware can be slow.
+</Note>
+
+<Tip>
+**Error Recovery:** Implement reconnection logic for transient failures (cable disconnects, USB resets).
+</Tip>
+
+<Note>
+**Thread Safety:** Use `Arc<Mutex<>>` for shared resources like serial ports since tools may be called concurrently.
+</Note>
+
+<Tip>
+**Firmware Protocol:** Keep protocol simple and text-based for debugging. Binary protocols are harder to troubleshoot.
+</Tip>
+
+## Supported Board Types
+
+Current implementations:
+
+- **nucleo-f401re** - STM32 Nucleo F401RE over USB serial
+- **rpi-gpio** - Raspberry Pi GPIO via sysfs
+
+## Firmware Development
+
+See `docs/hardware-peripherals-design.md` for:
+- Communication protocol specification
+- Firmware implementation guide
+- Example firmware for STM32 (C/C++)
+- Testing and debugging procedures
+
+## Testing
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_connect_disconnect() {
+        let mut peripheral = NucleoF401RE::new(
+            "test-board".to_string(),
+            "/dev/ttyACM0".to_string(),
+        );
+
+        peripheral.connect().await.unwrap();
+        assert!(peripheral.health_check().await);
+
+        peripheral.disconnect().await.unwrap();
+        assert!(!peripheral.health_check().await);
+    }
+
+    #[tokio::test]
+    async fn test_tools_registration() {
+        let peripheral = NucleoF401RE::new(
+            "test-board".to_string(),
+            "/dev/ttyACM0".to_string(),
+        );
+
+        let tools = peripheral.tools();
+        assert!(!tools.is_empty());
+        assert!(tools.iter().any(|t| t.name() == "gpio_write"));
+    }
+}
+```
+
+## Related
+
+- [Tool Trait](/api/tool-trait) - Peripheral capabilities are exposed as tools
+- [Hardware Peripherals Design](/hardware/peripherals-design) - Complete protocol specification
+- [Configuration Reference](/reference/config) - Configure peripherals in config.toml

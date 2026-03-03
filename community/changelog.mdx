@@ -1,0 +1,319 @@
+---
+title: Changelog Highlights
+description: Recent changes, improvements, and fixes in ZeroClaw
+---
+
+# Changelog Highlights
+
+Track the evolution of ZeroClaw with notable changes, improvements, and fixes.
+
+<Info>For the complete changelog, see [CHANGELOG.md](https://github.com/zeroclaw-labs/zeroclaw/blob/main/CHANGELOG.md) in the repository.</Info>
+
+## Unreleased
+
+Upcoming features and fixes currently in development:
+
+### Security
+
+<Card title="Legacy Encryption Migration" icon="shield-halved">
+  The `enc:` prefix (XOR cipher) is now **deprecated**. Secrets using this format will be automatically migrated to `enc2:` (ChaCha20-Poly1305 AEAD) when decrypted via `decrypt_and_migrate()`. A warning is emitted when legacy values are encountered.
+</Card>
+
+**New APIs:**
+- `SecretStore::decrypt_and_migrate()` — Decrypts and migrates legacy secrets
+- `SecretStore::needs_migration()` — Check if a value uses legacy format
+- `SecretStore::is_secure_encrypted()` — Check if a value uses secure `enc2:` format
+
+### Added
+
+<AccordionGroup>
+  <Accordion title="Feishu/Lark Document Tool">
+    New `feishu_doc` tool with comprehensive document operations:
+    
+    - `read` — Read document content
+    - `write` — Write to documents
+    - `append` — Append content
+    - `create` — Create new documents
+    - `list_blocks` — List document blocks
+    - `get_block` — Get specific block
+    - `update_block` — Update block content
+    - `delete_block` — Delete block
+    - `create_table` — Create tables
+    - `write_table_cells` — Write table data
+    - `create_table_with_values` — Create populated tables
+    - `upload_image` — Upload images
+    - `upload_file` — Upload files
+  </Accordion>
+  
+  <Accordion title="Telegram Mention-Only Mode">
+    New `mention_only` config option for Telegram channel:
+    
+    ```toml
+    [channels.telegram]
+    mention_only = true  # Bot only responds to @mentions in groups
+    ```
+    
+    When enabled, the bot only responds to messages that @-mention it in group chats. Direct messages always work regardless of this setting. **Default: `false`**
+  </Accordion>
+  
+  <Accordion title="Agent Session Persistence">
+    Session persistence guidance now includes explicit backend/strategy/TTL key names for rollout planning.
+  </Accordion>
+</AccordionGroup>
+
+### Deprecated
+
+<Warning>
+  **`enc:` prefix for encrypted secrets** — Use `enc2:` (ChaCha20-Poly1305) instead. Legacy values are still decrypted for backward compatibility but should be migrated.
+</Warning>
+
+### Fixed
+
+<AccordionGroup>
+  <Accordion title="Gemini Thinking Model Support">
+    Responses from thinking models (e.g., `gemini-3-pro-preview`) are now handled correctly:
+    
+    - Skips internal reasoning parts (`thought: true`)
+    - Skips signature parts (`thoughtSignature`)
+    - Extracts only the final answer text
+    - Falls back to thinking content when no non-thinking response is available
+  </Accordion>
+  
+  <Accordion title="Gateway Port Updates">
+    - Default gateway port updated to **`42617`**
+    - Removed all user-facing references to port `3000`
+  </Accordion>
+  
+  <Accordion title="Onboarding Channel Menu">
+    Fixed compiler warnings: channel menu dispatch now uses an enum-backed selector instead of hard-coded numeric match arms, preventing duplicated pattern warnings in `src/onboard/wizard.rs`.
+  </Accordion>
+  
+  <Accordion title="OpenAI Tool Spec Parsing">
+    Fixed compile-time type mismatch: native tool spec parsing now uses owned serializable/deserializable structs when validating tool schemas before API calls.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## v0.1.0 (2026-02-13)
+
+Initial release of ZeroClaw — a trait-based, production-ready agent framework.
+
+### Core Architecture
+
+<Card title="Trait-Based Pluggability" icon="puzzle-piece">
+  Every subsystem is swappable through well-defined traits:
+  - **Provider**: LLM backends
+  - **Channel**: Messaging platforms
+  - **Observer**: Metrics and logging
+  - **RuntimeAdapter**: Platform adapters
+  - **Tool**: Agent capabilities
+  - **Memory**: Persistent storage
+</Card>
+
+### Providers
+
+<CardGroup cols={2}>
+  <Card title="OpenRouter" icon="route">
+    Single API to access Claude, GPT-4, Llama, Gemini, and more
+  </Card>
+</CardGroup>
+
+### Channels
+
+<CardGroup cols={2}>
+  <Card title="CLI Channel" icon="terminal">
+    Interactive and single-message modes for command-line usage
+  </Card>
+</CardGroup>
+
+### Observability
+
+<AccordionGroup>
+  <Accordion title="Observer Implementations">
+    - **NoopObserver**: Zero overhead for production
+    - **LogObserver**: Tracing integration
+    - **MultiObserver**: Fan-out to multiple backends
+  </Accordion>
+</AccordionGroup>
+
+### Security
+
+<AccordionGroup>
+  <Accordion title="Security Features">
+    - **Workspace sandboxing**: Restrict file access to workspace
+    - **Command allowlisting**: Only approved commands can run
+    - **Path traversal blocking**: Prevent directory escape attacks
+    - **Autonomy levels**: ReadOnly, Supervised, Full
+    - **Rate limiting**: Prevent runaway execution
+    - **Forbidden path protection**: Block access to `/etc`, `/root`, `~/.ssh`
+  </Accordion>
+</AccordionGroup>
+
+### Tools
+
+<CardGroup cols={3}>
+  <Card title="Shell" icon="terminal">
+    Sandboxed command execution
+  </Card>
+  <Card title="FileRead" icon="file">
+    Path-checked file reading
+  </Card>
+  <Card title="FileWrite" icon="pen-to-square">
+    Path-checked file writing
+  </Card>
+</CardGroup>
+
+### Memory (Brain)
+
+<CardGroup cols={2}>
+  <Card title="SQLite Backend" icon="database">
+    Persistent, searchable memory that survives restarts
+  </Card>
+  <Card title="Markdown Backend" icon="file-lines">
+    Plain-text, human-readable memory files
+  </Card>
+</CardGroup>
+
+### Features
+
+<AccordionGroup>
+  <Accordion title="Heartbeat Engine">
+    Periodic task execution from `HEARTBEAT.md` for scheduled operations.
+  </Accordion>
+  
+  <Accordion title="Runtime">
+    Native adapter for Mac, Linux, and Raspberry Pi with minimal overhead.
+  </Accordion>
+  
+  <Accordion title="Configuration">
+    TOML-based configuration system with sensible defaults and easy overrides.
+  </Accordion>
+  
+  <Accordion title="Onboarding">
+    Interactive CLI wizard with workspace scaffolding for quick setup.
+  </Accordion>
+</AccordionGroup>
+
+### CLI Commands
+
+<CodeGroup>
+```bash Agent Mode
+zeroclaw agent
+```
+
+```bash Gateway Mode
+zeroclaw gateway
+```
+
+```bash Status Check
+zeroclaw status
+```
+
+```bash Scheduled Tasks
+zeroclaw cron
+```
+
+```bash Channel Management
+zeroclaw channel
+```
+
+```bash Tool Listing
+zeroclaw tools
+```
+
+```bash Setup Wizard
+zeroclaw onboard
+```
+</CodeGroup>
+
+### CI/CD
+
+<Card title="Cross-Platform Builds" icon="github">
+  GitHub Actions with automated builds for:
+  - Linux (x86_64, ARM64)
+  - macOS (Intel, Apple Silicon)
+  - Windows
+</Card>
+
+### Testing
+
+<Card title="Comprehensive Test Coverage" icon="flask">
+  **159 inline tests** covering all modules and edge cases:
+  - Unit tests for each subsystem
+  - Integration tests for workflows
+  - Security boundary tests
+  - Error handling validation
+</Card>
+
+### Performance
+
+<CardGroup cols={2}>
+  <Card title="Binary Size" icon="file-zipper">
+    **3.1MB** optimized release build (includes bundled SQLite)
+  </Card>
+  <Card title="Memory Usage" icon="memory">
+    **&lt;5MB RAM** for typical agent operations
+  </Card>
+  <Card title="Startup Time" icon="bolt">
+    **&lt;10ms** cold start on release builds
+  </Card>
+  <Card title="Hardware Support" icon="microchip">
+    Runs on devices with as little as 5MB RAM
+  </Card>
+</CardGroup>
+
+### Security (v0.1.0)
+
+<AccordionGroup>
+  <Accordion title="Attack Prevention">
+    - Path traversal attack prevention
+    - Command injection blocking
+    - Workspace escape prevention
+    - Forbidden system path protection
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Version History
+
+<CardGroup cols={2}>
+  <Card title="v0.1.0" icon="rocket" href="https://github.com/zeroclaw-labs/zeroclaw/releases/tag/v0.1.0">
+    Initial release - Feb 13, 2026
+  </Card>
+  <Card title="Full Changelog" icon="scroll" href="https://github.com/zeroclaw-labs/zeroclaw/blob/main/CHANGELOG.md">
+    Complete version history
+  </Card>
+</CardGroup>
+
+## Release Philosophy
+
+ZeroClaw follows [Semantic Versioning](https://semver.org/) and maintains a detailed changelog based on [Keep a Changelog](https://keepachangelog.com/).
+
+<Info>
+  Each release includes:
+  - **Added**: New features and capabilities
+  - **Changed**: Updates to existing functionality
+  - **Deprecated**: Features marked for removal
+  - **Removed**: Deleted features
+  - **Fixed**: Bug fixes and corrections
+  - **Security**: Security improvements and patches
+</Info>
+
+## Stay Updated
+
+<CardGroup cols={2}>
+  <Card title="GitHub Releases" icon="github" href="https://github.com/zeroclaw-labs/zeroclaw/releases">
+    Subscribe to release notifications
+  </Card>
+  <Card title="X @zeroclawlabs" icon="x-twitter" href="https://x.com/zeroclawlabs">
+    Follow for announcements
+  </Card>
+  <Card title="Telegram" icon="telegram" href="https://t.me/zeroclawlabs">
+    Join the community channel
+  </Card>
+  <Card title="Reddit" icon="reddit" href="https://www.reddit.com/r/zeroclawlabs/">
+    Discuss on r/zeroclawlabs
+  </Card>
+</CardGroup>

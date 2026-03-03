@@ -1,0 +1,211 @@
+---
+title: CLI Channel
+description: Command-line interface channel for local stdin/stdout communication
+---
+
+# CLI Channel
+
+The CLI channel provides a simple, always-available interface for local development and testing through stdin/stdout communication.
+
+## Overview
+
+- **Channel Name**: `cli`
+- **Transport**: Local stdin/stdout
+- **Authentication**: None (local only)
+- **Dependencies**: Zero external dependencies
+- **Public Port Required**: No
+
+## Configuration
+
+### Basic Setup
+
+```toml
+[channels_config]
+cli = true
+```
+
+The CLI channel is the simplest channel to configure - just set it to `true` in your config.
+
+### Complete Example
+
+```toml
+# ~/.zeroclaw/config.toml
+[channels_config]
+cli = true
+```
+
+## Features
+
+### Automatic Message Handling
+
+- Reads input from stdin line by line
+- Writes responses to stdout
+- Filters empty lines automatically
+- Generates unique message IDs using UUID v4
+
+### Exit Commands
+
+The CLI channel supports graceful exit through commands:
+
+```bash
+/quit
+/exit
+```
+
+### Message Format
+
+Each incoming message is converted to a `ChannelMessage` with:
+
+- **ID**: Unique UUID v4 identifier
+- **Sender**: `"user"`
+- **Reply Target**: `"user"`
+- **Content**: The input line (trimmed)
+- **Channel**: `"cli"`
+- **Timestamp**: Current Unix timestamp in seconds
+- **Thread**: None
+
+## Usage
+
+### Starting the CLI Channel
+
+```bash
+zeroclaw channel start
+```
+
+With the CLI channel enabled, ZeroClaw will read from stdin and write to stdout:
+
+```bash
+$ zeroclaw channel start
+Hello, ZeroClaw!
+Hello! How can I help you today?
+```
+
+### Interactive Mode
+
+The CLI channel is ideal for:
+
+- Local development and testing
+- Debugging agent behavior
+- Scripting and automation via pipes
+- Quick one-off queries
+
+### Piped Input
+
+```bash
+echo "What is the capital of France?" | zeroclaw channel start
+```
+
+### Redirect Output
+
+```bash
+zeroclaw channel start > responses.txt
+```
+
+## Implementation Details
+
+### Source Location
+
+`src/channels/cli.rs`
+
+### Key Components
+
+#### CliChannel Struct
+
+```rust
+pub struct CliChannel;
+```
+
+Zero-sized type with no state - completely stateless.
+
+#### Channel Trait Implementation
+
+- **`name()`**: Returns `"cli"`
+- **`send()`**: Writes message content to stdout via `println!`
+- **`listen()`**: Reads from stdin using `tokio::io::AsyncBufReadExt`
+
+### Message Processing Flow
+
+1. **Input**: Async buffered stdin reader
+2. **Filtering**: Skip empty lines and exit commands
+3. **Conversion**: Create `ChannelMessage` with metadata
+4. **Delivery**: Send to agent via channel sender
+
+### Exit Behavior
+
+When a user sends `/quit` or `/exit`:
+
+1. The listen loop breaks cleanly
+2. No error is returned (normal termination)
+3. The channel shuts down gracefully
+
+## Error Handling
+
+### Send Errors
+
+Sending to stdout never fails - the `send()` method always returns `Ok(())`.
+
+### Listen Errors
+
+- **EOF**: Returns `Ok(())` when stdin closes
+- **Channel Closed**: Breaks loop when message receiver is dropped
+- **Line Read Error**: Propagates as `anyhow::Result` error
+
+## Testing
+
+The CLI channel includes comprehensive tests:
+
+```rust
+#[test]
+fn cli_channel_name() {
+    assert_eq!(CliChannel::new().name(), "cli");
+}
+
+#[tokio::test]
+async fn cli_channel_send_does_not_panic() {
+    let ch = CliChannel::new();
+    let result = ch.send(&SendMessage {
+        content: "hello".into(),
+        recipient: "user".into(),
+        subject: None,
+        thread_ts: None,
+    }).await;
+    assert!(result.is_ok());
+}
+```
+
+## Best Practices
+
+1. **Use for Development**: Perfect for testing agent behavior locally
+2. **Combine with Other Channels**: Run CLI alongside remote channels
+3. **Redirect as Needed**: Use shell redirects for logging
+4. **Exit Cleanly**: Use `/quit` or `/exit` for graceful shutdown
+
+## Troubleshooting
+
+### No Response
+
+- **Check Configuration**: Ensure `cli = true` is set
+- **Check Agent Status**: Verify the agent is running
+- **Check Provider**: Ensure a provider is configured
+
+### Input Not Processing
+
+- **Empty Lines**: Empty lines are automatically filtered
+- **Whitespace**: Input is trimmed automatically
+- **EOF**: Closing stdin (Ctrl+D) terminates the channel
+
+## Comparison with Other Channels
+
+| Feature | CLI | Telegram | Discord | Email |
+|---------|-----|----------|---------|-------|
+| Local Only | Yes | No | No | No |
+| Authentication | None | Token | Token | Credentials |
+| Public Port | No | No | No | No |
+| Setup Complexity | Minimal | Medium | Medium | High |
+| Best For | Testing | Production | Production | Async |
+
+## See Also
+
+- [Channel Trait](/api/traits/channel)
+- [Message Types](/api/types/message)
+- [Agent Configuration](/configuration/agent)

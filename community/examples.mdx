@@ -1,0 +1,392 @@
+---
+title: Examples and Use Cases
+description: Real-world examples and integration patterns for ZeroClaw
+---
+
+# Examples and Use Cases
+
+Learn from real implementations and common patterns in the ZeroClaw ecosystem.
+
+## Example Repository
+
+The ZeroClaw repository includes complete working examples in the [`examples/` directory](https://github.com/zeroclaw-labs/zeroclaw/tree/main/examples):
+
+```bash
+examples/
+├── custom_provider.rs    # Build a custom LLM provider
+├── custom_channel.rs     # Integrate messaging platforms
+├── custom_tool.rs        # Add agent capabilities
+├── custom_memory.rs      # Create memory backends
+└── plugins/
+    └── echo/            # WASM plugin example
+```
+
+## Custom Provider Example
+
+Integrate any LLM backend by implementing the `Provider` trait:
+
+<CodeGroup>
+```rust Ollama Provider
+//! Example: Ollama local provider
+
+use anyhow::Result;
+use async_trait::async_trait;
+use crate::providers::traits::Provider;
+
+pub struct OllamaProvider {
+    base_url: String,
+    client: reqwest::Client,
+}
+
+impl OllamaProvider {
+    pub fn new(base_url: Option<&str>) -> Self {
+        Self {
+            base_url: base_url.unwrap_or("http://localhost:11434").to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for OllamaProvider {
+    async fn chat(&self, message: &str, model: &str, temperature: f64) -> Result<String> {
+        let url = format!("{}/api/generate", self.base_url);
+
+        let body = serde_json::json!({
+            "model": model,
+            "prompt": message,
+            "temperature": temperature,
+            "stream": false,
+        });
+
+        let resp = self.client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        resp["response"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("No response field in Ollama reply"))
+    }
+}
+```
+
+```rust Registration
+// In src/providers/mod.rs
+"ollama" => Ok(Box::new(ollama::OllamaProvider::new(None))),
+```
+</CodeGroup>
+
+<Tip>The full example is in [`examples/custom_provider.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/examples/custom_provider.rs)</Tip>
+
+## Custom Channel Example
+
+Connect ZeroClaw to any messaging platform:
+
+<CodeGroup>
+```rust Telegram Channel
+use async_trait::async_trait;
+use anyhow::Result;
+use tokio::sync::mpsc;
+use crate::channels::traits::{Channel, ChannelMessage};
+
+pub struct TelegramChannel {
+    bot_token: String,
+    allowed_users: Vec<String>,
+    client: reqwest::Client,
+}
+
+impl TelegramChannel {
+    pub fn new(bot_token: &str, allowed_users: Vec<String>) -> Self {
+        Self {
+            bot_token: bot_token.to_string(),
+            allowed_users,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    fn api_url(&self, method: &str) -> String {
+        format!("https://api.telegram.org/bot{}/{method}", self.bot_token)
+    }
+}
+
+#[async_trait]
+impl Channel for TelegramChannel {
+    fn name(&self) -> &str { "telegram" }
+
+    async fn send(&self, message: &str, chat_id: &str) -> Result<()> {
+        self.client
+            .post(self.api_url("sendMessage"))
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "Markdown",
+            }))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    async fn listen(&self, tx: mpsc::Sender<ChannelMessage>) -> Result<()> {
+        // Poll for updates and forward to tx
+        // See full implementation in examples/custom_channel.rs
+        todo!()
+    }
+
+    async fn health_check(&self) -> bool {
+        self.client
+            .get(self.api_url("getMe"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+}
+```
+</CodeGroup>
+
+<Tip>Full implementation: [`examples/custom_channel.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/examples/custom_channel.rs)</Tip>
+
+## Custom Tool Example
+
+Extend agent capabilities with custom tools:
+
+<CodeGroup>
+```rust HTTP Get Tool
+use async_trait::async_trait;
+use anyhow::Result;
+use serde_json::{json, Value};
+use crate::tools::traits::{Tool, ToolResult};
+
+pub struct HttpGetTool;
+
+#[async_trait]
+impl Tool for HttpGetTool {
+    fn name(&self) -> &str {
+        "http_get"
+    }
+
+    fn description(&self) -> &str {
+        "Fetch a URL and return the HTTP status code and content length"
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "URL to fetch" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult> {
+        let url = args["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
+
+        match reqwest::get(url).await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let len = resp.content_length().unwrap_or(0);
+                Ok(ToolResult {
+                    success: status &lt; 400,
+                    output: format!("HTTP {status} — {len} bytes"),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!("Request failed: {e}")),
+            }),
+        }
+    }
+}
+```
+</CodeGroup>
+
+<Tip>Full implementation: [`examples/custom_tool.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/examples/custom_tool.rs)</Tip>
+
+## Custom Memory Backend Example
+
+Implement any storage backend for agent memory:
+
+<CodeGroup>
+```rust In-Memory Backend
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use crate::memory::traits::{Memory, MemoryEntry, MemoryCategory};
+
+pub struct InMemoryBackend {
+    store: Mutex<HashMap<String, MemoryEntry>>,
+}
+
+impl InMemoryBackend {
+    pub fn new() -> Self {
+        Self {
+            store: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl Memory for InMemoryBackend {
+    fn name(&self) -> &str { "in-memory" }
+
+    async fn store(
+        &self,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+    ) -> anyhow::Result<()> {
+        let entry = MemoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            key: key.to_string(),
+            content: content.to_string(),
+            category,
+            timestamp: chrono::Local::now().to_rfc3339(),
+            score: None,
+        };
+        self.store
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .insert(key.to_string(), entry);
+        Ok(())
+    }
+
+    async fn recall(&self, query: &str, limit: usize) -> anyhow::Result<Vec<MemoryEntry>> {
+        let store = self.store.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let query_lower = query.to_lowercase();
+
+        let mut results: Vec<MemoryEntry> = store
+            .values()
+            .filter(|e| e.content.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect();
+
+        results.truncate(limit);
+        Ok(results)
+    }
+
+    // ... additional methods
+}
+```
+</CodeGroup>
+
+<Tip>Full implementation with Redis example: [`examples/custom_memory.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/examples/custom_memory.rs)</Tip>
+
+## WASM Plugin Example
+
+Extend ZeroClaw with WebAssembly plugins:
+
+```toml
+# examples/plugins/echo/echo.plugin.toml
+name = "echo"
+version = "0.1.0"
+wasm_path = "echo.wasm"
+
+[exports]
+tools = ["echo_tool"]
+providers = []
+```
+
+<Steps>
+  <Step title="Build WASM module">
+    ```bash
+    wat2wasm examples/plugins/echo/echo.wat -o examples/plugins/echo/echo.wasm
+    ```
+  </Step>
+  
+  <Step title="Configure ZeroClaw">
+    ```toml
+    [plugins]
+    enabled = true
+    load_paths = ["examples/plugins/echo"]
+    ```
+  </Step>
+  
+  <Step title="Use the plugin">
+    The plugin's exported tools and providers are now available to the agent.
+  </Step>
+</Steps>
+
+<Info>WASM plugins must export specific functions: `alloc`, `dealloc`, `zeroclaw_tool_execute`, `zeroclaw_provider_chat`. See [`examples/plugins/echo/README.md`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/examples/plugins/echo/README.md) for ABI details.</Info>
+
+## Common Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Local LLM Integration" icon="computer">
+    Use the Ollama provider example to run agents with local models like Llama, Mistral, or Phi.
+  </Card>
+  
+  <Card title="Custom Messaging Platforms" icon="message">
+    Adapt the Telegram channel example for Slack, Discord, Matrix, or proprietary chat systems.
+  </Card>
+  
+  <Card title="Domain-Specific Tools" icon="wrench">
+    Create tools for database queries, API interactions, or business-specific workflows.
+  </Card>
+  
+  <Card title="Persistent Memory" icon="database">
+    Implement memory backends using Redis, PostgreSQL, S3, or vector databases.
+  </Card>
+  
+  <Card title="Hardware Integration" icon="microchip">
+    See hardware examples for Raspberry Pi GPIO and STM32 peripherals.
+  </Card>
+  
+  <Card title="Multi-Provider Strategies" icon="network-wired">
+    Combine multiple providers with fallback logic for reliability.
+  </Card>
+</CardGroup>
+
+## Running Examples
+
+### Compile and Run
+
+```bash
+# Run a specific example
+cargo run --example custom_provider
+cargo run --example custom_channel
+cargo run --example custom_tool
+cargo run --example custom_memory
+```
+
+### Build for Production
+
+```bash
+# Build optimized binary with your custom integration
+cargo build --release --locked
+```
+
+## Community Examples
+
+Looking for more examples? Check the community showcase:
+
+- [GitHub Discussions - Show & Tell](https://github.com/zeroclaw-labs/zeroclaw/discussions/categories/show-and-tell)
+- [Community Projects](https://github.com/topics/zeroclaw)
+
+<Tip>Built something cool? Share it in [Discussions](https://github.com/zeroclaw-labs/zeroclaw/discussions) or submit a PR to add it to the examples directory!</Tip>
+
+## Additional Resources
+
+<CardGroup cols={2}>
+  <Card title="Architecture Guide" icon="sitemap" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/docs">
+    Understand the trait-based design
+  </Card>
+  <Card title="API Reference" icon="book" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/docs/reference">
+    Complete API documentation
+  </Card>
+  <Card title="Contributing Guide" icon="code-pull-request" href="/community/contributing">
+    Learn how to contribute your examples
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="https://github.com/zeroclaw-labs/zeroclaw/blob/main/docs/troubleshooting.md">
+    Common issues and solutions
+  </Card>
+</CardGroup>

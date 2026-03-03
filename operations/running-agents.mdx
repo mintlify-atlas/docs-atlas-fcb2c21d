@@ -1,0 +1,303 @@
+---
+title: Running Agents
+description: Production deployment and runtime management
+---
+
+Learn how to run ZeroClaw agents in production with proper supervision and reliability.
+
+## Runtime Modes
+
+ZeroClaw supports multiple runtime modes depending on your use case:
+
+<Tabs>
+  <Tab title="Daemon Mode">
+    Long-running supervised process with automatic recovery.
+    
+    ```bash
+    zeroclaw daemon
+    ```
+    
+    **Features:**
+    - Gateway server
+    - Channel listeners
+    - Cron scheduler
+    - Health monitoring
+    - Auto-restart on failure
+  </Tab>
+  
+  <Tab title="Service Mode">
+    System service with OS-level supervision.
+    
+    ```bash
+    zeroclaw service install
+    zeroclaw service start
+    ```
+    
+    **Features:**
+    - Auto-start on boot
+    - systemd/launchd integration
+    - Log rotation
+    - Resource limits
+  </Tab>
+  
+  <Tab title="Interactive Chat">
+    One-off agent conversations.
+    
+    ```bash
+    zeroclaw agent -m "Hello!"
+    ```
+    
+    **Use cases:**
+    - Testing
+    - Development
+    - Quick queries
+  </Tab>
+  
+  <Tab title="Gateway Only">
+    HTTP/WebSocket gateway without background services.
+    
+    ```bash
+    zeroclaw gateway
+    ```
+    
+    **Use cases:**
+    - Webhook endpoint
+    - API server
+    - Reverse proxy backend
+  </Tab>
+</Tabs>
+
+## Production Deployment
+
+<Steps>
+  <Step title="Install as system service">
+    ```bash
+    # Install service
+    zeroclaw service install
+    
+    # Verify installation
+    zeroclaw service status
+    ```
+  </Step>
+  
+  <Step title="Configure for production">
+    Edit `~/.zeroclaw/config.toml`:
+    
+    ```toml
+    [agent]
+    provider = "anthropic"
+    model = "claude-3-5-sonnet-20241022"
+    autonomy_level = "supervised"  # Require approval for tools
+    
+    [gateway]
+    host = "0.0.0.0"
+    port = 3000
+    require_pairing = true
+    rate_limit_per_minute = 60
+    
+    [security]
+    shell_enabled = true
+    blocked_commands = ["rm -rf /", "dd if="]
+    workspace_path = "/var/zeroclaw/workspace"
+    ```
+  </Step>
+  
+  <Step title="Start the service">
+    ```bash
+    zeroclaw service start
+    ```
+  </Step>
+  
+  <Step title="Verify health">
+    ```bash
+    zeroclaw status
+    zeroclaw doctor
+    zeroclaw channel doctor
+    ```
+  </Step>
+</Steps>
+
+## Health Checks
+
+### System Status
+
+```bash
+zeroclaw status
+```
+
+Shows:
+- Active provider and model
+- Configured channels
+- Gateway status
+- Memory backend
+
+### Diagnostics
+
+```bash
+zeroclaw doctor
+```
+
+Checks:
+- Configuration validity
+- Provider credentials
+- File permissions
+- Network connectivity
+- Resource availability
+
+### Channel Health
+
+```bash
+zeroclaw channel doctor
+```
+
+Verifies:
+- Channel credentials
+- API connectivity
+- Webhook configuration
+- Allowlist validation
+
+## Monitoring
+
+### Log Files
+
+<Tabs>
+  <Tab title="Linux (systemd)">
+    ```bash
+    # Follow logs
+    journalctl --user -u zeroclaw.service -f
+    
+    # Last 100 lines
+    journalctl --user -u zeroclaw.service -n 100
+    
+    # Since boot
+    journalctl --user -u zeroclaw.service -b
+    ```
+  </Tab>
+  
+  <Tab title="macOS (launchd)">
+    ```bash
+    # Service logs
+    tail -f ~/.zeroclaw/logs/daemon.stdout.log
+    tail -f ~/.zeroclaw/logs/daemon.stderr.log
+    ```
+  </Tab>
+  
+  <Tab title="Docker">
+    ```bash
+    docker logs -f zeroclaw
+    ```
+  </Tab>
+</Tabs>
+
+### State Files
+
+- **Daemon State**: `~/.zeroclaw/daemon_state.json`
+  - Updated every 30 seconds
+  - Contains runtime statistics
+  - Used for health monitoring
+
+- **Memory**: `~/.zeroclaw/memory/`
+  - Markdown or SQLite database
+  - Conversation history
+  - Agent knowledge
+
+### Metrics
+
+Enable Prometheus metrics:
+
+```toml
+[observability]
+prometheus_port = 9090
+```
+
+Metrics endpoint: `http://localhost:9090/metrics`
+
+Key metrics:
+- `zeroclaw_requests_total` - Total requests
+- `zeroclaw_tool_calls_total` - Tool execution count
+- `zeroclaw_errors_total` - Error count
+- `zeroclaw_token_usage_total` - Token consumption
+- `zeroclaw_latency_seconds` - Response latency
+
+## Supervision
+
+### Auto-restart
+
+The daemon automatically restarts failed components:
+
+- **Gateway**: Restart on crash
+- **Channels**: Reconnect on disconnect
+- **Scheduler**: Resume after failure
+
+### Resource Limits
+
+Configure resource constraints:
+
+```toml
+[runtime]
+max_memory_mb = 512
+max_cpu_percent = 80
+max_file_descriptors = 1024
+```
+
+### Rate Limiting
+
+Protect against abuse:
+
+```toml
+[security]
+max_actions_per_hour = 100
+rate_limit_per_minute = 60
+```
+
+## Updates
+
+### Check for updates
+
+```bash
+zeroclaw update check
+```
+
+### Update to latest
+
+```bash
+# Stop service
+zeroclaw service stop
+
+# Update binary
+zeroclaw update
+
+# Start service
+zeroclaw service start
+```
+
+### Rollback
+
+If an update causes issues:
+
+```bash
+# Restore previous binary
+cp ~/.zeroclaw/backups/zeroclaw-0.1.7 /usr/local/bin/zeroclaw
+
+# Restart service
+zeroclaw service restart
+```
+
+## Multi-instance
+
+Run multiple agents with different configurations:
+
+```bash
+# Instance 1: Production
+ZEROCLAW_CONFIG_PATH=~/.zeroclaw/prod.toml zeroclaw daemon &
+
+# Instance 2: Staging
+ZEROCLAW_CONFIG_PATH=~/.zeroclaw/staging.toml zeroclaw gateway --port 3001 &
+```
+
+## Related
+
+- [Monitoring Guide](/operations/monitoring)
+- [Troubleshooting](/operations/troubleshooting)
+- [Security Best Practices](/operations/security-best-practices)
+- [Daemon Command](/api/commands/daemon)

@@ -1,0 +1,401 @@
+---
+title: ESP32 Setup
+description: Build and flash ESP32 firmware for ZeroClaw
+---
+
+# ESP32 Setup
+
+ESP32 is a powerful WiFi/Bluetooth microcontroller from Espressif. ZeroClaw currently supports ESP32 in **host-mediated mode** (serial transport), with **edge-native mode** (WiFi + onboard AI) planned for future releases.
+
+## Supported Variants
+
+| Variant | Architecture | WiFi | Bluetooth | Build Tool | Status |
+|---------|--------------|------|-----------|------------|--------|
+| **ESP32-C3** | RISC-V 32-bit | Yes | BLE | nightly + build-std | ✅ Recommended |
+| **ESP32-C2** | RISC-V 32-bit | Yes | BLE | nightly + build-std | ✅ Stable |
+| **ESP32** | Xtensa 32-bit | Yes | Classic + BLE | espup | 🚧 Experimental |
+| **ESP32-S2** | Xtensa 32-bit | Yes | No | espup | 🚧 Experimental |
+| **ESP32-S3** | Xtensa 32-bit | Yes | BLE | espup | 🚧 Experimental |
+
+<Note>
+**ESP32-C3 (RISC-V)** is recommended due to better Rust support and simpler build process.
+</Note>
+
+## Hardware Features
+
+### ESP32-C3 (Recommended)
+- **MCU**: RISC-V 32-bit, 160 MHz
+- **GPIO**: 22 pins
+- **WiFi**: 802.11 b/g/n
+- **Bluetooth**: BLE 5.0
+- **Flash**: 4MB (typical)
+- **USB**: Native USB CDC (no FTDI chip needed)
+
+## Prerequisites
+
+### 1. Python 3.12
+
+ESP-IDF requires Python 3.10–3.13 (not 3.14):
+
+```bash
+# macOS
+brew install python@3.12
+
+# Ubuntu/Debian
+sudo apt install python3.12 python3.12-venv
+
+# Verify
+python3.12 --version
+```
+
+### 2. virtualenv
+
+Required by ESP-IDF tools:
+
+```bash
+# macOS (PEP 668 workaround)
+/opt/homebrew/opt/python@3.12/bin/python3.12 -m pip install virtualenv --break-system-packages
+
+# Linux
+pip3 install virtualenv
+```
+
+### 3. Rust Tools
+
+```bash
+# Install esp tooling
+cargo install espflash ldproxy
+
+# Verify
+espflash --version
+ldproxy --version
+```
+
+## Quick Start (ESP32-C3)
+
+### 1. Set Python Path
+
+```bash
+# macOS
+export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"
+
+# Or add to ~/.zshrc for persistence
+echo 'export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"' >> ~/.zshrc
+```
+
+### 2. Build Firmware
+
+```bash
+cd ~/zeroclaw/firmware/zeroclaw-esp32
+
+# First build downloads ESP-IDF (~5-15 min)
+cargo build --release
+
+# Binary location:
+# target/riscv32imc-esp-espidf/release/zeroclaw-esp32
+```
+
+<Note>
+The first build downloads and compiles the ESP-IDF framework. This is a one-time setup and can take 5–15 minutes.
+</Note>
+
+### 3. Flash Firmware
+
+```bash
+# Connect ESP32-C3 via USB, then:
+espflash flash target/riscv32imc-esp-espidf/release/zeroclaw-esp32 --monitor
+
+# This will:
+# 1. Detect the connected ESP32
+# 2. Flash the firmware
+# 3. Open serial monitor
+```
+
+### 4. Find Serial Port
+
+```bash
+# Linux
+ls /dev/ttyUSB* /dev/ttyACM*
+# CH340: /dev/ttyUSB0
+# CP2102: /dev/ttyUSB0
+# Native USB: /dev/ttyACM0
+
+# macOS
+ls /dev/cu.usbserial* /dev/cu.SLAB*
+# CH340: /dev/cu.usbserial-14320
+# CP2102: /dev/cu.SLAB_USBtoUART
+# Native USB (C3): /dev/cu.usbmodem14101
+
+# Windows
+mode
+# Should show: COM3, COM4, etc.
+```
+
+### 5. Add to Configuration
+
+```bash
+# Auto-configure
+zeroclaw peripheral add esp32 /dev/ttyUSB0
+
+# Or manually edit ~/.zeroclaw/config.toml
+```
+
+```toml
+[peripherals]
+enabled = true
+
+[[peripherals.boards]]
+board = "esp32"
+transport = "serial"
+path = "/dev/ttyUSB0"  # Adjust for your system
+baud = 115200
+```
+
+### 6. Test Connection
+
+```bash
+# Test GPIO
+zeroclaw agent -m "Turn on GPIO 2 on ESP32"
+
+# Some dev boards have built-in LED on GPIO 2
+```
+
+## Building for Xtensa (ESP32, S2, S3)
+
+For original ESP32 (Xtensa architecture):
+
+### 1. Install espup
+
+```bash
+cargo install espup espflash
+espup install
+
+# Load environment
+source ~/export-esp.sh
+```
+
+### 2. Edit Target
+
+Edit `.cargo/config.toml` in the firmware directory:
+
+```toml
+[build]
+target = "xtensa-esp32-espidf"  # or xtensa-esp32s2-espidf, xtensa-esp32s3-espidf
+```
+
+### 3. Build and Flash
+
+```bash
+cd ~/zeroclaw/firmware/zeroclaw-esp32
+cargo build --release --target xtensa-esp32-espidf
+espflash flash target/xtensa-esp32-espidf/release/zeroclaw-esp32 --monitor
+```
+
+## GPIO Pin Mapping
+
+### ESP32-C3
+
+```
+GPIO: 0-21 (some reserved)
+
+Safe GPIO:
+2, 3, 4, 5, 6, 7, 8, 9, 10, 18, 19
+
+Reserved/Boot pins:
+0  = Boot button
+2  = Built-in LED (some boards)
+9  = Boot mode (handle with care)
+18 = USB D-
+19 = USB D+
+20 = UART RX
+21 = UART TX
+```
+
+### Original ESP32
+
+```
+GPIO: 0-39
+
+Input-only pins: 34-39
+
+Safe GPIO:
+4, 5, 12-19, 21-23, 25-27, 32, 33
+
+Reserved:
+0  = Boot button
+1  = UART TX
+2  = Built-in LED (some boards)
+3  = UART RX
+6-11 = Flash memory (do not use)
+```
+
+## Serial Protocol
+
+Same JSON protocol as Arduino/STM32:
+
+### Request
+
+```json
+{"id":"1","cmd":"gpio_write","args":{"pin":2,"value":1}}
+```
+
+### Response
+
+```json
+{"id":"1","ok":true,"result":"done"}
+```
+
+### Supported Commands
+
+| Command | Args | Description |
+|---------|------|-------------|
+| `ping` | None | Health check |
+| `gpio_read` | `{"pin": N}` | Read GPIO |
+| `gpio_write` | `{"pin": N, "value": V}` | Write GPIO |
+| `capabilities` | None | Get available pins |
+
+## Firmware Architecture
+
+**Source**: `firmware/zeroclaw-esp32/src/main.rs`
+
+**Built with**:
+- **Language**: Rust
+- **Framework**: [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/) (via `esp-idf-sys`)
+- **HAL**: `esp-idf-hal`
+- **Protocol**: JSON-over-UART
+- **Toolchain**: nightly Rust + `build-std` (RISC-V) or espup (Xtensa)
+
+## Troubleshooting
+
+### "No space left on device"
+
+```bash
+# Free up disk space
+rm -rf ~/.cargo/registry/cache ~/.cargo/registry/src
+
+# Clean unused toolchains
+rustup toolchain list
+rustup toolchain uninstall <name>
+```
+
+### "can't find crate for `core`"
+
+```bash
+# RISC-V builds use build-std, not espup
+# Do NOT source ~/export-esp.sh for RISC-V
+
+# Verify rust-toolchain.toml exists:
+cat rust-toolchain.toml
+# Should contain: components = ["rust-src"]
+
+# Re-run from firmware directory:
+cd firmware/zeroclaw-esp32
+cargo build --release
+```
+
+### "externally-managed-environment"
+
+```bash
+# Install virtualenv with PEP 668 workaround
+/opt/homebrew/opt/python@3.12/bin/python3.12 -m pip install virtualenv --break-system-packages
+```
+
+### "Failed to open serial port"
+
+```bash
+# Linux: Add user to dialout group
+sudo usermod -aG dialout $USER
+# Logout and login
+
+# macOS: Check driver
+# CH340 needs driver: https://github.com/adrianmihalko/ch340g-ch34g-ch34x-mac-os-x-driver
+
+# Windows: Install USB drivers from manufacturer
+```
+
+### 10,000+ files in git status
+
+```bash
+# ESP-IDF cache is in .embuild/
+# Should be in .gitignore
+echo ".embuild/" >> .gitignore
+```
+
+### Build very slow
+
+```bash
+# First build compiles ESP-IDF (~10-15 min)
+# Subsequent builds are much faster (~1-2 min)
+
+# Use release profile for smaller binaries:
+cargo build --release
+
+# Or use dev profile for faster debug builds:
+cargo build
+```
+
+## Edge-Native Mode (Future)
+
+Phase 6 of the hardware roadmap includes running ZeroClaw **on** the ESP32:
+
+- WiFi connectivity for remote control
+- Local LLM inference (TinyLlama, GGML)
+- WebSocket for agent communication
+- OTA firmware updates
+
+This is currently in development. The current firmware is for host-mediated GPIO control.
+
+## Performance Notes
+
+- **GPIO speed**: ~1 MHz toggle rate
+- **Serial latency**: ~15ms round-trip
+- **Flash time**: ~10 seconds
+- **Boot time**: ~1-2 seconds
+- **WiFi connect**: ~2-5 seconds (when implemented)
+
+## Example Projects
+
+### WiFi-Controlled LED
+
+```bash
+# Current: Host-mediated
+zeroclaw agent -m "Turn on GPIO 2"
+
+# Future: Edge-native
+curl http://esp32.local/gpio/2/on
+```
+
+### Remote Sensor
+
+```rust
+// Future edge-native firmware
+loop {
+    let temp = read_temperature_sensor();
+    post_to_cloud(temp).await;
+    delay(60_000).await;  // 1 minute
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Supported Boards" icon="microchip" href="/hardware/supported-boards">
+    Compare all hardware platforms
+  </Card>
+  <Card title="Arduino Setup" icon="arduino" href="/hardware/peripherals/arduino">
+    Similar Arduino-style board
+  </Card>
+  <Card title="Hardware Architecture" icon="diagram-project" href="/architecture/hardware-peripherals-design">
+    Understand the peripheral system
+  </Card>
+  <Card title="Firmware Source" icon="code" href="https://github.com/zeroclaw-labs/zeroclaw/tree/main/firmware/zeroclaw-esp32">
+    View firmware source code
+  </Card>
+</CardGroup>
+
+## Reference
+
+- [ESP32-C3 Datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-c3_datasheet_en.pdf)
+- [ESP-IDF Programming Guide](https://docs.espressif.com/projects/esp-idf/en/latest/)
+- [espflash Documentation](https://github.com/esp-rs/espflash)
+- [ESP32 in Rust Book](https://esp-rs.github.io/book/)

@@ -1,0 +1,460 @@
+---
+title: OpenAI Provider
+description: API reference for the OpenAI provider
+---
+
+## Overview
+
+The OpenAI provider enables ZeroClaw to use GPT models and reasoning models via the OpenAI API.
+
+**Provider ID:** `openai`
+
+**Base URL:** `https://api.openai.com/v1`
+
+**API Version:** Latest stable
+
+## Authentication
+
+### Environment Variables
+
+Credentials are resolved in the following order:
+
+1. `OPENAI_API_KEY` - OpenAI API key
+2. Generic fallback: `ZEROCLAW_API_KEY` or `API_KEY`
+
+### API Key Format
+
+Standard API keys use the format `sk-*`:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+## Configuration
+
+### Config File
+
+```toml
+default_provider = "openai"
+api_key = "sk-..."
+default_model = "gpt-4o"
+default_temperature = 0.7
+```
+
+### Custom Base URL
+
+For compatible endpoints:
+
+```toml
+default_provider = "custom:https://api.openai.com/v1"
+api_key = "your-key"
+default_model = "gpt-4o"
+```
+
+### Max Tokens Override
+
+Optional per-provider override:
+
+```rust
+OpenAiProvider::with_base_url_and_max_tokens(
+    Some("https://api.openai.com/v1"),
+    Some("sk-..."),
+    Some(8192)
+)
+```
+
+## Features
+
+### Native Tool Calling
+
+**Supported:** Yes
+
+The provider uses OpenAI's native function calling format:
+
+```json
+{
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Get weather for a location",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {"type": "string"}
+        },
+        "required": ["location"]
+      }
+    }
+  }],
+  "tool_choice": "auto"
+}
+```
+
+### Vision Support
+
+**Supported:** Yes (model-dependent)
+
+Vision models like `gpt-4o` support image inputs. ZeroClaw does not currently parse inline images for OpenAI (vision support via multimodal normalization is provider-specific).
+
+### Reasoning Models
+
+**Supported:** Yes
+
+Reasoning models (e.g., `o1`, `o1-mini`) return output in `reasoning_content` field:
+
+```json
+{
+  "choices": [{
+    "message": {
+      "content": "final answer",
+      "reasoning_content": "step-by-step thinking..."
+    }
+  }]
+}
+```
+
+ZeroClaw automatically extracts:
+- `content` → primary response
+- `reasoning_content` → fallback if `content` is empty
+
+### Token Usage Tracking
+
+**Supported:** Yes
+
+Usage data is extracted from response:
+
+```json
+{
+  "usage": {
+    "prompt_tokens": 100,
+    "completion_tokens": 50
+  }
+}
+```
+
+Mapped to ZeroClaw's `TokenUsage`:
+
+```rust
+TokenUsage {
+    input_tokens: Some(100),
+    output_tokens: Some(50),
+}
+```
+
+## API Endpoints
+
+### Chat Completion
+
+**Endpoint:** `POST /chat/completions`
+
+**Request:**
+
+```json
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "temperature": 0.7,
+  "max_tokens": 4096
+}
+```
+
+**Response:**
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "Hello! How can I help you?"
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 15,
+    "completion_tokens": 9
+  }
+}
+```
+
+### Models Endpoint
+
+**Endpoint:** `GET /models`
+
+**Used for warmup:**
+
+```bash
+zeroclaw warmup --provider openai
+```
+
+## Request Configuration
+
+### Max Tokens
+
+**Default:** Not set (uses model default)
+
+**Override:** Optional via `max_tokens_override`
+
+```rust
+let provider = OpenAiProvider::with_base_url_and_max_tokens(
+    None,
+    Some("sk-..."),
+    Some(2048)
+);
+```
+
+### Temperature
+
+**Range:** 0.0 - 2.0
+
+**Default:** 0.7 (from config)
+
+Controls response randomness.
+
+### Timeouts
+
+- **Request timeout:** 120 seconds
+- **Connection timeout:** 10 seconds
+
+## Message Format
+
+### System Prompt
+
+Sent as a message with role `system`:
+
+```json
+{
+  "role": "system",
+  "content": "You are a helpful assistant."
+}
+```
+
+### User Messages
+
+Simple text:
+
+```json
+{
+  "role": "user",
+  "content": "Hello!"
+}
+```
+
+### Assistant Messages
+
+Text only:
+
+```json
+{
+  "role": "assistant",
+  "content": "I can help with that."
+}
+```
+
+With tool calls:
+
+```json
+{
+  "role": "assistant",
+  "content": "Let me check that.",
+  "tool_calls": [{
+    "id": "call_abc123",
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "arguments": "{\"location\": \"San Francisco\"}"
+    }
+  }]
+}
+```
+
+With reasoning content:
+
+```json
+{
+  "role": "assistant",
+  "content": "The answer is 42.",
+  "reasoning_content": "First, I considered..."
+}
+```
+
+### Tool Messages
+
+Tool results:
+
+```json
+{
+  "role": "tool",
+  "tool_call_id": "call_abc123",
+  "content": "Temperature: 72°F, Sunny"
+}
+```
+
+## Tool Call Conversion
+
+ZeroClaw's internal tool format is converted to OpenAI format:
+
+**ZeroClaw internal:**
+
+```json
+{
+  "id": "call_123",
+  "name": "shell",
+  "arguments": "{\"command\": \"ls\"}"
+}
+```
+
+**Sent to OpenAI:**
+
+```json
+{
+  "id": "call_123",
+  "type": "function",
+  "function": {
+    "name": "shell",
+    "arguments": "{\"command\": \"ls\"}"
+  }
+}
+```
+
+## Stop Reasons
+
+Normalized stop reasons:
+
+| OpenAI | ZeroClaw Normalized |
+|--------|--------------------|
+| `stop` | `EndTurn` |
+| `length` | `MaxTokens` |
+| `tool_calls` | `ToolUse` |
+| `content_filter` | `ContentFilter` |
+
+## Error Handling
+
+### Authentication Errors
+
+```text
+OpenAI API key not set. Set OPENAI_API_KEY or edit config.toml.
+```
+
+**Solution:** Export `OPENAI_API_KEY`.
+
+### Invalid Tool Specification
+
+Strict validation for tool definitions:
+
+```rust
+if spec.kind != "function" {
+    bail!("Invalid OpenAI tool specification: unsupported tool type '{}'", spec.kind);
+}
+```
+
+Tools must have:
+- `type: "function"`
+- `function.name` (string)
+- `function.description` (string, can be empty)
+- `function.parameters` (object)
+
+### API Errors
+
+Error responses are sanitized before display:
+
+```rust
+if !response.status().is_success() {
+    return Err(api_error("OpenAI", response).await);
+}
+```
+
+## Provider Capabilities
+
+```rust
+ProviderCapabilities {
+    native_tool_calling: true,
+    vision: false, // Model-dependent
+}
+```
+
+Vision support depends on the specific model (e.g., `gpt-4o`).
+
+## Warmup
+
+**Supported:** Yes
+
+Warmup calls the `/models` endpoint:
+
+```bash
+zeroclaw warmup --provider openai
+```
+
+Successful warmup establishes TLS and verifies credentials.
+
+## Example Usage
+
+### Simple Chat
+
+```bash
+export OPENAI_API_KEY="sk-..."
+zeroclaw agent --provider openai --model gpt-4o -m "Hello!"
+```
+
+### With Tools
+
+```bash
+zeroclaw agent --provider openai \
+  --model gpt-4o \
+  --enable-tools \
+  -m "What's the weather in San Francisco?"
+```
+
+### Reasoning Model
+
+```bash
+zeroclaw agent --provider openai \
+  --model o1-preview \
+  -m "Solve this complex problem..."
+```
+
+## Reasoning Content Handling
+
+Reasoning models may return:
+
+```json
+{
+  "content": "",
+  "reasoning_content": "thinking steps..."
+}
+```
+
+ZeroClaw extracts:
+
+```rust
+fn effective_content(&self) -> String {
+    match &self.content {
+        Some(c) if !c.is_empty() => c.clone(),
+        _ => self.reasoning_content.clone().unwrap_or_default(),
+    }
+}
+```
+
+This ensures reasoning output is never lost.
+
+## Limitations
+
+- Max tokens override is optional (not all requests use it)
+- Vision support is model-dependent (not auto-detected)
+- Reasoning content pass-through in multi-turn history
+- Tool validation is strict (malformed tools are rejected)
+
+## Related
+
+- [Custom Provider Setup](/api/providers/custom)
+- [Provider Reference](/docs/providers-reference)
+- [Tool Calling Guide](/docs/tool-calling)

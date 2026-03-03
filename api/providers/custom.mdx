@@ -1,0 +1,427 @@
+---
+title: Custom Provider Setup
+description: Configure custom API endpoints for OpenAI and Anthropic-compatible providers
+---
+
+## Overview
+
+ZeroClaw supports custom API endpoints for both OpenAI-compatible and Anthropic-compatible providers. This enables integration with:
+
+- Local LLM servers (llama.cpp, SGLang, vLLM, Ollama)
+- Corporate AI gateways
+- Third-party OpenAI/Anthropic proxies
+- Self-hosted models
+
+## Provider Types
+
+### OpenAI-Compatible (`custom:`)
+
+For services implementing the OpenAI API format:
+
+**Provider prefix:** `custom:https://your-api.com`
+
+**Endpoints:**
+- `POST /chat/completions` - Chat completion
+- `GET /models` - Model discovery (optional)
+
+### Anthropic-Compatible (`anthropic-custom:`)
+
+For services implementing the Anthropic API format:
+
+**Provider prefix:** `anthropic-custom:https://your-api.com`
+
+**Endpoints:**
+- `POST /v1/messages` - Chat completion
+
+## Configuration Methods
+
+### Config File
+
+Edit `~/.zeroclaw/config.toml`:
+
+```toml
+# OpenAI-compatible
+default_provider = "custom:https://api.example.com"
+api_key = "your-api-key"
+default_model = "model-name"
+default_temperature = 0.7
+```
+
+```toml
+# Anthropic-compatible
+default_provider = "anthropic-custom:https://api.example.com"
+api_key = "your-api-key"
+default_model = "claude-sonnet-4-6"
+default_temperature = 0.7
+```
+
+### Environment Variables
+
+For custom providers, use the generic API key variables:
+
+```bash
+export API_KEY="your-api-key"
+# or
+export ZEROCLAW_API_KEY="your-api-key"
+
+zeroclaw agent --provider "custom:https://api.example.com" \
+  --model model-name \
+  -m "Hello!"
+```
+
+### API Mode (OpenAI-compatible only)
+
+Control which endpoint is called first:
+
+```toml
+default_provider = "custom:https://api.example.com"
+provider_api = "openai-chat-completions"  # Default
+# or
+provider_api = "openai-responses"  # Responses-first mode
+```
+
+**Note:** `provider_api` is only valid when using `custom:<url>`.
+
+## First-Class Local Providers
+
+ZeroClaw includes dedicated providers for common local servers with optimized defaults.
+
+### llama.cpp Server
+
+**Provider ID:** `llamacpp` (alias: `llama.cpp`)
+
+**Default endpoint:** `http://localhost:8080/v1`
+
+**Setup:**
+
+```bash
+# Start llama-server
+llama-server -hf ggml-org/gpt-oss-20b-GGUF \
+  --jinja -c 133000 \
+  --host 127.0.0.1 --port 8033
+
+# Configure ZeroClaw
+cat >> ~/.zeroclaw/config.toml <<EOF
+default_provider = "llamacpp"
+api_url = "http://127.0.0.1:8033/v1"
+default_model = "ggml-org/gpt-oss-20b-GGUF"
+default_temperature = 0.7
+EOF
+
+# Validate
+zeroclaw models refresh --provider llamacpp
+zeroclaw agent -m "hello"
+```
+
+**Authentication:**
+
+API key is optional. Set `LLAMACPP_API_KEY` only if server is started with `--api-key`.
+
+### SGLang Server
+
+**Provider ID:** `sglang`
+
+**Default endpoint:** `http://localhost:30000/v1`
+
+**Setup:**
+
+```bash
+# Start SGLang server
+python -m sglang.launch_server \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --port 30000 \
+  --tool-call-parser hermes  # Required for tool calling
+
+# Configure ZeroClaw
+cat >> ~/.zeroclaw/config.toml <<EOF
+default_provider = "sglang"
+default_model = "meta-llama/Llama-3.1-8B-Instruct"
+default_temperature = 0.7
+EOF
+
+# Validate
+zeroclaw models refresh --provider sglang
+zeroclaw agent -m "hello"
+```
+
+**Tool calling:** Requires `--tool-call-parser` flag when launching SGLang.
+
+### vLLM Server
+
+**Provider ID:** `vllm`
+
+**Default endpoint:** `http://localhost:8000/v1`
+
+**Setup:**
+
+```bash
+# Start vLLM server
+vllm serve meta-llama/Llama-3.1-8B-Instruct
+
+# Configure ZeroClaw
+cat >> ~/.zeroclaw/config.toml <<EOF
+default_provider = "vllm"
+default_model = "meta-llama/Llama-3.1-8B-Instruct"
+default_temperature = 0.7
+EOF
+
+# Validate
+zeroclaw models refresh --provider vllm
+zeroclaw agent -m "hello"
+```
+
+### Hunyuan (Tencent)
+
+**Provider ID:** `hunyuan` (alias: `tencent`)
+
+**Base URL:** `https://api.hunyuan.cloud.tencent.com/v1`
+
+**Setup:**
+
+```bash
+export HUNYUAN_API_KEY="your-api-key"
+
+cat >> ~/.zeroclaw/config.toml <<EOF
+default_provider = "hunyuan"
+default_model = "hunyuan-t1-latest"
+default_temperature = 0.7
+EOF
+
+zeroclaw agent -m "hello"
+```
+
+**Models:** `hunyuan-t1-latest`, `hunyuan-turbo-latest`, `hunyuan-pro`
+
+## OpenAI Responses API (WebSocket)
+
+For OpenAI-compatible endpoints:
+
+**Auto mode:** When `custom:` endpoint resolves to `api.openai.com`, ZeroClaw tries WebSocket first (`wss://.../responses`) and falls back to HTTP.
+
+**Manual override:**
+
+```bash
+# Force WebSocket mode
+export ZEROCLAW_RESPONSES_WEBSOCKET=1
+
+# Disable WebSocket (HTTP only)
+export ZEROCLAW_RESPONSES_WEBSOCKET=0
+```
+
+## Credential Resolution
+
+For `custom:` and `anthropic-custom:` providers:
+
+1. Explicit `api_key` from config
+2. `ZEROCLAW_API_KEY` environment variable
+3. `API_KEY` environment variable
+
+**Note:** Provider-specific env vars (e.g., `OPENAI_API_KEY`) are not used for custom endpoints.
+
+## Testing Configuration
+
+### Verify Endpoint
+
+```bash
+# Test connection
+zeroclaw agent --provider "custom:https://api.example.com" \
+  --model model-name \
+  -m "test message"
+```
+
+### Model Discovery
+
+```bash
+zeroclaw models refresh --provider "custom:https://api.example.com"
+```
+
+### Health Check
+
+```bash
+zeroclaw status
+```
+
+## Troubleshooting
+
+### Authentication Errors
+
+**Symptom:** `401 Unauthorized`
+
+**Solution:**
+
+1. Verify API key is correct
+2. Check endpoint URL format (must include `http://` or `https://`)
+3. Ensure endpoint is accessible from your network
+
+```bash
+curl -I https://api.example.com
+```
+
+### Model Not Found
+
+**Symptom:** `404 Model not found`
+
+**Solution:**
+
+1. Verify model name matches provider's available models
+2. List available models:
+
+```bash
+curl -sS https://api.example.com/models \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+3. For gateways that don't implement `/models`, send a test request and check the error message:
+
+```bash
+curl -sS https://api.example.com/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "test-model",
+    "messages": [{"role": "user", "content": "test"}]
+  }'
+```
+
+### Connection Issues
+
+**Symptom:** Connection timeout or refused
+
+**Solution:**
+
+1. Test endpoint accessibility:
+
+```bash
+curl -I https://api.example.com
+```
+
+2. Check firewall/proxy settings
+3. Verify provider status page
+4. Try with verbose logging:
+
+```bash
+RUST_LOG=debug zeroclaw agent --provider "custom:..." -m "test"
+```
+
+## Examples
+
+### Local LLM Server
+
+```toml
+default_provider = "custom:http://localhost:8080/v1"
+api_key = "optional-if-auth-enabled"
+default_model = "local-model"
+```
+
+### Corporate Proxy
+
+```toml
+default_provider = "anthropic-custom:https://llm-proxy.corp.example.com"
+api_key = "internal-token"
+default_model = "claude-sonnet-4-6"
+```
+
+### Cloud Provider Gateway
+
+```toml
+default_provider = "custom:https://gateway.cloud-provider.com/v1"
+api_key = "gateway-api-key"
+default_model = "gpt-4o"
+```
+
+### Multi-Provider Fallback
+
+Combine custom endpoints with fallback:
+
+```toml
+default_provider = "custom:https://primary.example.com"
+
+[reliability]
+fallback_providers = [
+  "custom:https://backup.example.com",
+  "openai"
+]
+```
+
+## API Format Requirements
+
+### OpenAI-Compatible
+
+**Request:**
+
+```json
+{
+  "model": "model-name",
+  "messages": [
+    {"role": "system", "content": "System prompt"},
+    {"role": "user", "content": "User message"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 4096
+}
+```
+
+**Response:**
+
+```json
+{
+  "choices": [{
+    "message": {
+      "role": "assistant",
+      "content": "Response text"
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 5
+  }
+}
+```
+
+### Anthropic-Compatible
+
+**Request:**
+
+```json
+{
+  "model": "model-name",
+  "max_tokens": 4096,
+  "system": "System prompt",
+  "messages": [
+    {"role": "user", "content": "User message"}
+  ],
+  "temperature": 0.7
+}
+```
+
+**Response:**
+
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "Response text"
+  }],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 10,
+    "output_tokens": 5
+  }
+}
+```
+
+## Limitations
+
+- Custom endpoints must match OpenAI or Anthropic API formats
+- Provider-specific features may not be supported
+- Model discovery depends on endpoint implementing `/models`
+- Tool calling support depends on endpoint compatibility
+- Vision support depends on endpoint capabilities
+
+## Related
+
+- [Anthropic Provider](/api/providers/anthropic)
+- [OpenAI Provider](/api/providers/openai)
+- [Provider Reference](/docs/providers-reference)
+- [Local Setup Guide](/docs/local-setup)
