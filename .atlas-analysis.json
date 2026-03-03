@@ -1,0 +1,187 @@
+{
+  "projectType": "framework",
+  "projectName": "ZeroClaw",
+  "projectDescription": "Fast, small, and fully autonomous AI agent framework with trait-driven architecture and swappable components",
+  "theme": "aspen",
+  "primaryColor": "#FF6B35",
+  "lightColor": "#FFB997",
+  "darkColor": "#D84315",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/trait-system",
+              "concepts/providers",
+              "concepts/channels",
+              "concepts/tools",
+              "concepts/memory",
+              "concepts/security"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/creating-providers",
+              "guides/creating-channels",
+              "guides/creating-tools",
+              "guides/custom-memory",
+              "guides/peripherals",
+              "guides/gateway-setup",
+              "guides/deployment"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/running-agents",
+              "operations/monitoring",
+              "operations/troubleshooting",
+              "operations/security-best-practices"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Traits",
+            "pages": [
+              "api/provider-trait",
+              "api/channel-trait",
+              "api/tool-trait",
+              "api/memory-trait",
+              "api/peripheral-trait"
+            ]
+          },
+          {
+            "group": "Built-in Providers",
+            "pages": [
+              "api/providers/anthropic",
+              "api/providers/openai",
+              "api/providers/gemini",
+              "api/providers/bedrock",
+              "api/providers/custom"
+            ]
+          },
+          {
+            "group": "Built-in Channels",
+            "pages": [
+              "api/channels/cli",
+              "api/channels/telegram",
+              "api/channels/discord",
+              "api/channels/slack",
+              "api/channels/email",
+              "api/channels/whatsapp"
+            ]
+          },
+          {
+            "group": "Built-in Tools",
+            "pages": [
+              "api/tools/shell",
+              "api/tools/file-operations",
+              "api/tools/browser",
+              "api/tools/memory",
+              "api/tools/web-search"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "api/commands/chat",
+              "api/commands/gateway",
+              "api/commands/daemon",
+              "api/commands/config"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Hardware",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "hardware/introduction",
+              "hardware/supported-boards"
+            ]
+          },
+          {
+            "group": "Peripherals",
+            "pages": [
+              "hardware/peripherals/raspberry-pi",
+              "hardware/peripherals/stm32-nucleo",
+              "hardware/peripherals/arduino",
+              "hardware/peripherals/esp32"
+            ]
+          },
+          {
+            "group": "Robot Kit",
+            "pages": [
+              "hardware/robot-kit/overview",
+              "hardware/robot-kit/setup",
+              "hardware/robot-kit/api"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Community",
+        "groups": [
+          {
+            "group": "Resources",
+            "pages": [
+              "community/contributing",
+              "community/examples",
+              "community/changelog",
+              "community/roadmap"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Trait-driven architecture for extensibility",
+    "Swappable providers, channels, tools, and memory backends",
+    "Ultra-low memory footprint (<5MB RAM)",
+    "Fast startup and execution",
+    "Hardware peripheral support (STM32, Raspberry Pi, Arduino, ESP32)",
+    "Secure-by-default with pairing and sandboxing",
+    "Multi-channel support (Telegram, Discord, Slack, Email, WhatsApp)",
+    "Built-in web dashboard and gateway",
+    "OpenAI-compatible API",
+    "Cron scheduling and automation"
+  ],
+  "publicApiSurface": [
+    "Provider trait - Implement custom AI model providers",
+    "Channel trait - Implement custom messaging channels",
+    "Tool trait - Implement custom agent tools",
+    "Memory trait - Implement custom memory backends",
+    "Peripheral trait - Implement custom hardware peripherals",
+    "zeroclaw chat - Interactive CLI chat",
+    "zeroclaw gateway - Start HTTP gateway server",
+    "zeroclaw daemon - Run as background service",
+    "zeroclaw config - Manage configuration",
+    "zeroclaw doctor - System diagnostics",
+    "zeroclaw cron - Schedule agent tasks",
+    "Built-in providers: Anthropic, OpenAI, Gemini, Bedrock, Groq, DeepSeek",
+    "Built-in channels: CLI, Telegram, Discord, Slack, Email, WhatsApp, Matrix",
+    "Built-in tools: Shell, File Operations, Browser, Memory, Web Search, Composio",
+    "Robot Kit crate - Drive, vision, speech, sensors for robotics"
+  ]
+}
