@@ -1,0 +1,130 @@
+---
+title: zeroclaw doctor
+description: Run diagnostics for system health and configuration
+---
+
+The `zeroclaw doctor` command runs comprehensive diagnostics to verify your ZeroClaw installation and configuration.
+
+## Overview
+
+The doctor command checks:
+- Configuration file validity
+- Provider credentials and connectivity
+- Channel authentication
+- File permissions
+- Network access
+- Resource availability
+
+## Basic Usage
+
+```bash
+# Run all diagnostics
+zeroclaw doctor
+
+# Check specific subsystem
+zeroclaw doctor channel
+```
+
+## Subcommands
+
+### doctor (no subcommand)
+
+Run full system diagnostics.
+
+```bash
+zeroclaw doctor
+```
+
+**Checks:**
+- Config file parsing
+- Provider configuration
+- Workspace permissions
+- Binary location
+- Version info
+
+**Output:**
+```
+✓ Config file valid: ~/.zeroclaw/config.toml
+✓ Provider configured: anthropic (claude-3-5-sonnet-20241022)
+✓ Workspace accessible: ~/.zeroclaw/workspace
+✓ Memory backend: sqlite (~/.zeroclaw/memory.db)
+⚠ Gateway not configured
+ℹ ZeroClaw v0.1.8
+```
+
+### channel
+
+Diagnose channel connectivity.
+
+```bash
+zeroclaw doctor channel
+```
+
+**Checks:**
+- Channel credentials
+- API connectivity
+- Webhook URLs
+- Allowlist configuration
+- Bot permissions
+
+**Output:**
+```
+✓ Telegram: Connected (bot @zeroclaw_bot, 2 allowed users)
+✓ Discord: Connected (guild: ZeroClaw Server)
+✗ Slack: Invalid token (expired)
+⚠ Email: IMAP IDLE not supported by server
+```
+
+## Exit Codes
+
+- **0**: All checks passed
+- **1**: Warnings detected (non-critical)
+- **2**: Errors detected (requires action)
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="'Config file not found'">
+    **Solution:**
+    ```bash
+    zeroclaw config init
+    ```
+  </Accordion>
+  
+  <Accordion title="'Provider not configured'">
+    **Solution:**
+    ```bash
+    export ANTHROPIC_API_KEY="sk-ant-..."
+    zeroclaw doctor
+    ```
+  </Accordion>
+  
+  <Accordion title="'Channel authentication failed'">
+    **Solution:**
+    Check credentials in config:
+    ```bash
+    zeroclaw config get channels.telegram.bot_token
+    ```
+  </Accordion>
+  
+  <Accordion title="'Workspace not accessible'">
+    **Solution:**
+    ```bash
+    chmod 755 ~/.zeroclaw/workspace
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Verbose Output
+
+Enable debug logging:
+
+```bash
+RUST_LOG=debug zeroclaw doctor
+```
+
+## Related
+
+- [Status Command](/api/commands/status)
+- [Troubleshooting Guide](/operations/troubleshooting)
+- [Configuration](/configuration)

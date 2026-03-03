@@ -1,0 +1,268 @@
+---
+title: Matrix Channel
+description: Communicate through Matrix protocol with E2EE support
+---
+
+The Matrix channel enables communication through the Matrix protocol with support for encrypted rooms.
+
+## Overview
+
+Matrix is a decentralized, encrypted communication protocol used by:
+- Element (official client)
+- Government organizations
+- Privacy-focused communities
+- Federated chat systems
+
+**Features:**
+- End-to-end encryption (E2EE)
+- Decentralized architecture
+- Room-based messaging
+- User allowlists
+- Mention-only mode
+
+## Configuration
+
+### Basic Setup
+
+```toml
+[channels.matrix]
+homeserver = "https://matrix.org"
+access_token = "syt_..."
+room_id = "!roomid:matrix.org"  # Or #alias:matrix.org
+```
+
+### With Allowlist
+
+```toml
+[channels.matrix]
+homeserver = "https://matrix.org"
+access_token = "syt_..."
+room_id = "#zeroclaw:matrix.org"
+allowed_users = ["@alice:matrix.org", "@bob:matrix.org"]
+mention_only = true  # Only respond when mentioned
+```
+
+## Getting Access Token
+
+<Steps>
+  <Step title="Create Matrix Account">
+    Sign up at https://app.element.io or your homeserver
+  </Step>
+  
+  <Step title="Get Access Token">
+    **Element Web:**
+    1. Settings → Help & About
+    2. Scroll to "Advanced"
+    3. Click "Access Token"
+    4. Copy the token
+  </Step>
+  
+  <Step title="Find Room ID">
+    **Element Web:**
+    1. Open room
+    2. Room settings → Advanced
+    3. Copy "Internal room ID" (e.g., `!abc123:matrix.org`)
+    
+    **Or use room alias:**
+    `#roomname:matrix.org`
+  </Step>
+</Steps>
+
+## Features
+
+### End-to-End Encryption
+
+Matrix channel automatically handles E2EE rooms using the matrix-sdk library:
+
+```toml
+[channels.matrix]
+homeserver = "https://matrix.org"
+access_token = "syt_..."
+room_id = "!encrypted:matrix.org"
+# E2EE is automatic - session data stored in ~/.zeroclaw/matrix/
+```
+
+<Note>
+  First message in encrypted room may take a few seconds while keys are exchanged.
+</Note>
+
+### Session Persistence
+
+Matrix sessions are stored in `~/.zeroclaw/matrix/` directory:
+- **Crypto store**: Encryption keys
+- **Session data**: Login session
+- **State sync**: Room membership
+
+### Mention-Only Mode
+
+Only respond when bot is mentioned:
+
+```toml
+[channels.matrix]
+mention_only = true
+```
+
+Agent only replies to messages containing mention like:
+```
+@zeroclaw:matrix.org please help with this
+```
+
+### User Allowlist
+
+Restrict who can interact:
+
+```toml
+[channels.matrix]
+allowed_users = [
+    "@alice:matrix.org",
+    "@bob:matrix.org"
+]
+```
+
+Messages from other users are ignored.
+
+## Room Types
+
+### Public Rooms
+
+```toml
+room_id = "#public-room:matrix.org"
+```
+
+### Private Rooms
+
+```toml
+room_id = "!privateabc123:matrix.org"
+```
+
+### Encrypted Rooms
+
+```toml
+room_id = "!encryptedxyz789:matrix.org"
+# E2EE handled automatically
+```
+
+## Message Features
+
+### Send Messages
+
+```rust
+let message = SendMessage::new("Hello from ZeroClaw!", "#room:matrix.org");
+channel.send(&message).await?;
+```
+
+### Receive Messages
+
+Automatically processes:
+- Text messages
+- Encrypted messages (auto-decrypted)
+- Mentions
+- Room invites
+
+## Implementation Details
+
+**Matrix SDK:**
+- Uses `matrix-sdk` crate
+- Full E2EE support via Olm/Megolm
+- Automatic key backup
+- Device verification
+
+**Sync Mode:**
+- Long-polling sync
+- Real-time message delivery
+- Encrypted room support
+- Automatic reconnection
+
+**Source:** [`src/channels/matrix.rs`](https://github.com/zeroclaw-labs/zeroclaw/blob/main/src/channels/matrix.rs)
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Messages not decrypting">
+    **Solutions:**
+    
+    1. Delete crypto store and re-login:
+    ```bash
+    rm -rf ~/.zeroclaw/matrix/
+    zeroclaw daemon
+    ```
+    
+    2. Verify bot has been invited to encrypted room
+    
+    3. Check logs for key exchange errors:
+    ```bash
+    RUST_LOG=matrix_sdk=debug zeroclaw daemon
+    ```
+  </Accordion>
+  
+  <Accordion title="Bot not responding">
+    **Solutions:**
+    
+    1. Check allowlist:
+    ```bash
+    zeroclaw config get channels.matrix.allowed_users
+    ```
+    
+    2. Verify room ID format:
+    ```bash
+    # Should start with ! or #
+    zeroclaw config get channels.matrix.room_id
+    ```
+    
+    3. Check mention_only mode:
+    ```bash
+    zeroclaw config get channels.matrix.mention_only
+    ```
+  </Accordion>
+  
+  <Accordion title="Connection errors">
+    **Solutions:**
+    
+    1. Verify homeserver URL:
+    ```bash
+    curl https://matrix.org/_matrix/client/versions
+    ```
+    
+    2. Check access token validity:
+    ```bash
+    curl -H "Authorization: Bearer syt_..." \
+      https://matrix.org/_matrix/client/v3/account/whoami
+    ```
+    
+    3. Test with fresh token
+  </Accordion>
+</AccordionGroup>
+
+## Performance
+
+**Sync Latency:**
+- Real-time: &lt;1 second (long-polling)
+- Encrypted rooms: +500ms (decryption overhead)
+
+**Message Throughput:**
+- Send: 10 messages/second
+- Receive: Limited by sync rate
+
+## Security
+
+- **E2EE**: All messages in encrypted rooms use Olm/Megolm
+- **Access Control**: User allowlists enforced
+- **Token Storage**: Access token stored in config (use environment variable in production)
+- **Device Trust**: Automatic device verification
+
+Best practices:
+
+```toml
+[channels.matrix]
+homeserver = "https://matrix.org"
+# Use environment variable for token
+allowed_users = ["@trusted:matrix.org"]
+mention_only = true
+```
+
+## Related
+
+- [Channel Trait](/api/channel-trait)
+- [Discord Channel](/api/channels/discord)
+- [Telegram Channel](/api/channels/telegram)
+- [Matrix Protocol Documentation](https://matrix.org/docs/)

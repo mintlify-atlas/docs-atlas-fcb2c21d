@@ -1,0 +1,303 @@
+---
+title: Ollama Provider
+description: Run local LLMs with Ollama
+---
+
+Ollama enables running large language models locally on your machine.
+
+## Overview
+
+Ollama provides:
+- Local model execution (no API costs)
+- Privacy (data stays on your machine)
+- Offline operation
+- Fast inference on local hardware
+
+Supported models:
+- Llama 2/3
+- Mistral
+- Mixtral
+- Phi
+- Gemma
+- And more
+
+## Prerequisites
+
+### Install Ollama
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install ollama
+    ```
+  </Tab>
+  
+  <Tab title="Linux">
+    ```bash
+    curl -fsSL https://ollama.com/install.sh | sh
+    ```
+  </Tab>
+  
+  <Tab title="Windows">
+    Download from https://ollama.com/download
+  </Tab>
+</Tabs>
+
+### Start Ollama Server
+
+```bash
+ollama serve
+```
+
+Default endpoint: `http://localhost:11434`
+
+### Pull a Model
+
+```bash
+# Llama 3 8B (recommended for most use cases)
+ollama pull llama3
+
+# Smaller models (faster, less capable)
+ollama pull phi3
+ollama pull gemma:2b
+
+# Larger models (more capable, slower)
+ollama pull llama3:70b
+ollama pull mixtral:8x7b
+```
+
+List installed models:
+```bash
+ollama list
+```
+
+## Configuration
+
+### Config File
+
+```toml
+[agent]
+provider = "ollama"
+model = "llama3"  # Model name from 'ollama list'
+
+[providers.ollama]
+base_url = "http://localhost:11434"  # Ollama server URL
+```
+
+### CLI Usage
+
+```bash
+zeroclaw agent --provider ollama --model llama3
+```
+
+## Features
+
+### Tool Calling
+
+Ollama supports tool calling for compatible models:
+
+```toml
+[providers.ollama]
+tool_calling = "native"  # Use model's native function calling
+```
+
+Models with tool support:
+- `llama3:70b`
+- `mixtral:8x7b`
+- `mistral`
+
+<Note>
+  Smaller models may have limited tool calling capabilities.
+</Note>
+
+### Streaming
+
+Real-time response streaming:
+
+```toml
+[providers.ollama]
+stream = true
+```
+
+### Custom Parameters
+
+```toml
+[providers.ollama]
+temperature = 0.7
+top_p = 0.9
+top_k = 40
+repeat_penalty = 1.1
+```
+
+## Model Selection Guide
+
+### For General Use
+
+```bash
+# Best balance (8GB RAM minimum)
+ollama pull llama3
+
+# Faster, less capable (4GB RAM)
+ollama pull phi3
+```
+
+### For Coding
+
+```bash
+ollama pull codellama
+ollama pull deepseek-coder
+```
+
+### For Maximum Quality
+
+```bash
+# Requires 40GB+ RAM
+ollama pull llama3:70b
+ollama pull mixtral:8x7b
+```
+
+## Performance Tuning
+
+### GPU Acceleration
+
+Ollama automatically uses GPU if available (CUDA, Metal, ROCm).
+
+Check GPU usage:
+```bash
+ollama ps
+```
+
+### Context Window
+
+Adjust context size:
+
+```toml
+[providers.ollama]
+num_ctx = 4096  # Default: 2048
+```
+
+Larger contexts use more memory but allow longer conversations.
+
+### Batch Size
+
+```toml
+[providers.ollama]
+num_batch = 512  # Default: 512
+```
+
+## Request Format
+
+Ollama uses a simple JSON format:
+
+```json
+{
+  "model": "llama3",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "stream": false,
+  "options": {
+    "temperature": 0.7,
+    "top_p": 0.9
+  }
+}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Connection refused' error">
+    **Solution:**
+    
+    Start Ollama server:
+    ```bash
+    ollama serve
+    ```
+    
+    Verify it's running:
+    ```bash
+    curl http://localhost:11434/api/tags
+    ```
+  </Accordion>
+  
+  <Accordion title="'Model not found' error">
+    **Solution:**
+    
+    Pull the model first:
+    ```bash
+    ollama pull llama3
+    ollama list
+    ```
+  </Accordion>
+  
+  <Accordion title="Slow inference">
+    **Solutions:**
+    
+    1. Use smaller model:
+    ```bash
+    ollama pull phi3
+    ```
+    
+    2. Reduce context window:
+    ```toml
+    [providers.ollama]
+    num_ctx = 2048
+    ```
+    
+    3. Enable GPU acceleration (requires compatible hardware)
+  </Accordion>
+  
+  <Accordion title="Out of memory">
+    **Solutions:**
+    
+    1. Use smaller model
+    2. Reduce context window
+    3. Close other applications
+    4. Reduce num_batch
+  </Accordion>
+</AccordionGroup>
+
+## Example: Complete Setup
+
+```bash
+# Install Ollama
+brew install ollama
+
+# Start server (in separate terminal)
+ollama serve &
+
+# Pull model
+ollama pull llama3
+
+# Configure ZeroClaw
+zeroclaw config set agent.provider ollama
+zeroclaw config set agent.model llama3
+
+# Test
+zeroclaw agent -m "Hello!"
+```
+
+## Remote Ollama
+
+Connect to Ollama running on another machine:
+
+```toml
+[providers.ollama]
+base_url = "http://192.168.1.100:11434"
+```
+
+## Docker Deployment
+
+Run Ollama in Docker:
+
+```bash
+docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+docker exec ollama ollama pull llama3
+```
+
+## Related
+
+- [Custom Provider Setup](/api/providers/custom)
+- [Provider Trait](/api/provider-trait)
+- [Configuration](/configuration)
+- [Ollama Documentation](https://ollama.com/docs)

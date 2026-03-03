@@ -1,0 +1,136 @@
+---
+title: zeroclaw status
+description: Show system status and configuration summary
+---
+
+The `zeroclaw status` command displays a comprehensive overview of your ZeroClaw configuration and runtime state.
+
+## Overview
+
+Quickly check:
+- Active provider and model
+- Configured channels
+- Gateway status
+- Memory backend
+- Service state
+- Version information
+
+## Basic Usage
+
+```bash
+zeroclaw status
+```
+
+## Output
+
+### Example Output
+
+```
+ZeroClaw v0.1.8
+
+Provider: anthropic
+Model: claude-3-5-sonnet-20241022
+Autonomy Level: supervised
+
+Channels:
+  ✓ telegram (bot @zeroclaw_bot)
+  ✓ discord (ZeroClaw Server)
+  ✗ slack (not configured)
+
+Gateway:
+  Status: Running
+  Address: http://127.0.0.1:3000
+  Paired Devices: 2
+
+Memory:
+  Backend: sqlite
+  Location: ~/.zeroclaw/memory.db
+  Entries: 1,234
+
+Service:
+  Status: active (running)
+  Uptime: 2d 14h 23m
+  PID: 12345
+
+Workspace: ~/.zeroclaw/workspace
+Config: ~/.zeroclaw/config.toml
+```
+
+## Status Fields
+
+<ResponseField name="Provider" type="string">
+  Active LLM provider (anthropic, openai, etc.)
+</ResponseField>
+
+<ResponseField name="Model" type="string">
+  Current model ID
+</ResponseField>
+
+<ResponseField name="Autonomy Level" type="string">
+  Tool execution mode: `read_only`, `supervised`, or `full`
+</ResponseField>
+
+<ResponseField name="Channels" type="array">
+  Configured communication channels with status indicators
+</ResponseField>
+
+<ResponseField name="Gateway" type="object">
+  HTTP gateway status, address, and pairing info
+</ResponseField>
+
+<ResponseField name="Memory" type="object">
+  Memory backend type, location, and entry count
+</ResponseField>
+
+<ResponseField name="Service" type="object">
+  OS service status, uptime, and process ID
+</ResponseField>
+
+## Machine-Readable Output
+
+For scripting, use JSON output:
+
+```bash
+zeroclaw status --json
+```
+
+Output:
+```json
+{
+  "version": "0.1.8",
+  "provider": "anthropic",
+  "model": "claude-3-5-sonnet-20241022",
+  "autonomy_level": "supervised",
+  "channels": [
+    {"name": "telegram", "status": "active", "bot_username": "zeroclaw_bot"},
+    {"name": "discord", "status": "active", "guild": "ZeroClaw Server"}
+  ],
+  "gateway": {
+    "running": true,
+    "address": "http://127.0.0.1:3000",
+    "paired_devices": 2
+  },
+  "memory": {
+    "backend": "sqlite",
+    "path": "~/.zeroclaw/memory.db",
+    "entries": 1234
+  },
+  "service": {
+    "status": "active",
+    "uptime_seconds": 221580,
+    "pid": 12345
+  }
+}
+```
+
+## Exit Codes
+
+- **0**: System healthy
+- **1**: Warnings (non-critical issues)
+- **2**: Errors (critical issues)
+
+## Related
+
+- [Doctor Command](/api/commands/doctor)
+- [Configuration](/configuration)
+- [Monitoring](/operations/monitoring)

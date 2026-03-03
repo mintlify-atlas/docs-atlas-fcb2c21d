@@ -87,8 +87,10 @@
             "pages": [
               "api/providers/anthropic",
               "api/providers/openai",
+              "api/providers/openrouter",
               "api/providers/gemini",
               "api/providers/bedrock",
+              "api/providers/ollama",
               "api/providers/custom"
             ]
           },
@@ -100,7 +102,8 @@
               "api/channels/discord",
               "api/channels/slack",
               "api/channels/email",
-              "api/channels/whatsapp"
+              "api/channels/whatsapp",
+              "api/channels/matrix"
             ]
           },
           {
@@ -116,10 +119,13 @@
           {
             "group": "CLI Commands",
             "pages": [
-              "api/commands/chat",
+              "api/commands/agent",
               "api/commands/gateway",
               "api/commands/daemon",
-              "api/commands/config"
+              "api/commands/config",
+              "api/commands/service",
+              "api/commands/doctor",
+              "api/commands/cron"
             ]
           }
         ]

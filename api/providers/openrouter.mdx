@@ -1,0 +1,190 @@
+---
+title: OpenRouter Provider
+description: Access 200+ models through OpenRouter's unified API
+---
+
+OpenRouter provides access to models from multiple providers through a single API, with automatic fallbacks and load balancing.
+
+## Overview
+
+OpenRouter aggregates models from:
+- OpenAI (GPT-4, GPT-3.5)
+- Anthropic (Claude)
+- Google (Gemini)
+- Meta (Llama)
+- Mistral, Cohere, and more
+
+Supports:
+- 200+ models
+- Automatic failover
+- Usage-based pricing
+- No commitment
+
+## Configuration
+
+### Environment Variable
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."
+```
+
+### Config File
+
+```toml
+[agent]
+provider = "openrouter"
+model = "anthropic/claude-3.5-sonnet"  # Model name from OpenRouter catalog
+
+[providers.openrouter]
+api_key = "sk-or-v1-..."  # Optional: defaults to OPENROUTER_API_KEY
+base_url = "https://openrouter.ai/api/v1"  # Optional: custom endpoint
+```
+
+## Selecting Models
+
+OpenRouter uses slash-separated model IDs:
+
+```bash
+# Anthropic models
+zeroclaw agent --model anthropic/claude-3.5-sonnet
+zeroclaw agent --model anthropic/claude-3-opus
+
+# OpenAI models
+zeroclaw agent --model openai/gpt-4-turbo
+zeroclaw agent --model openai/gpt-3.5-turbo
+
+# Open source models
+zeroclaw agent --model meta-llama/llama-3.1-70b-instruct
+zeroclaw agent --model mistralai/mixtral-8x7b-instruct
+```
+
+Browse available models at: https://openrouter.ai/models
+
+## Features
+
+### Tool Calling
+
+Native tool calling for compatible models:
+
+```toml
+[providers.openrouter]
+tool_calling = "native"  # Uses model's native function calling
+```
+
+Models with tool support:
+- `anthropic/claude-3.5-sonnet`
+- `openai/gpt-4-turbo`
+- `google/gemini-pro`
+
+### Automatic Fallbacks
+
+OpenRouter automatically retries with alternative models if primary fails:
+
+```toml
+[providers.openrouter]
+fallback_models = [
+    "anthropic/claude-3.5-sonnet",
+    "openai/gpt-4-turbo",
+    "google/gemini-pro"
+]
+```
+
+### Cost Tracking
+
+Monitor spending:
+
+```bash
+zeroclaw cost summary --provider openrouter
+```
+
+## Request Format
+
+OpenRouter uses OpenAI-compatible request format:
+
+```json
+{
+  "model": "anthropic/claude-3.5-sonnet",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1000
+}
+```
+
+## Rate Limits
+
+Varies by model and plan:
+- **Free tier**: 10 requests/minute
+- **Pay-as-you-go**: 60 requests/minute
+- **Higher tiers**: Contact OpenRouter
+
+## Pricing
+
+Pay only for what you use. Prices vary by model:
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) |
+|-------|----------------------|------------------------|
+| Claude 3.5 Sonnet | $3.00 | $15.00 |
+| GPT-4 Turbo | $10.00 | $30.00 |
+| Llama 3.1 70B | $0.59 | $0.79 |
+
+Check current pricing at: https://openrouter.ai/models
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="'Invalid API key' error">
+    **Solution:**
+    
+    Get your API key from https://openrouter.ai/keys
+    
+    ```bash
+    export OPENROUTER_API_KEY="sk-or-v1-..."
+    zeroclaw status
+    ```
+  </Accordion>
+  
+  <Accordion title="'Model not found' error">
+    **Solution:**
+    
+    Check model ID format (should be `provider/model-name`):
+    
+    ```bash
+    # Correct
+    zeroclaw agent --model anthropic/claude-3.5-sonnet
+    
+    # Wrong
+    zeroclaw agent --model claude-3.5-sonnet
+    ```
+  </Accordion>
+  
+  <Accordion title="Rate limit errors">
+    **Solution:**
+    
+    Add rate limiting:
+    
+    ```toml
+    [security]
+    max_actions_per_hour = 50
+    rate_limit_per_minute = 10
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Example Usage
+
+```bash
+# Use Claude via OpenRouter
+export OPENROUTER_API_KEY="sk-or-v1-..."
+zeroclaw agent --provider openrouter --model anthropic/claude-3.5-sonnet
+
+# Try multiple models with fallback
+zeroclaw agent -p openrouter -m "openai/gpt-4-turbo,anthropic/claude-3-opus"
+```
+
+## Related
+
+- [Custom Provider Setup](/api/providers/custom)
+- [Provider Trait](/api/provider-trait)
+- [Configuration](/configuration)

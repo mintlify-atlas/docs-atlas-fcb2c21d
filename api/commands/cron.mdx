@@ -1,0 +1,212 @@
+---
+title: zeroclaw cron
+description: Configure and manage scheduled tasks
+---
+
+The `zeroclaw cron` command manages scheduled tasks using cron expressions, timestamps, or intervals.
+
+## Overview
+
+Schedule recurring or one-time agent tasks:
+- Cron expressions (5-field format)
+- RFC 3339 timestamps
+- Duration-based delays
+- Fixed intervals
+
+## Subcommands
+
+### list
+
+List all scheduled tasks.
+
+```bash
+zeroclaw cron list
+```
+
+**Output:**
+```
+ID       Schedule            Next Run              Message
+ab12cd   0 9 * * 1-5         2026-03-04 09:00 EST  Good morning
+ef34gh   */30 * * * *        2026-03-03 12:30 UTC  Check system health
+ij56kl   2026-03-15 14:00Z   2026-03-15 14:00 UTC  Send reminder
+```
+
+### add
+
+Add recurring task with cron expression.
+
+```bash
+zeroclaw cron add '<expression>' '<message>' [--tz <timezone>]
+```
+
+**Parameters:**
+
+<ParamField path="expression" type="string" required>
+  Cron expression (5 fields): `min hour day month weekday`
+</ParamField>
+
+<ParamField path="message" type="string" required>
+  Message to send to agent when task runs
+</ParamField>
+
+<ParamField path="--tz" type="string" default="UTC">
+  IANA timezone name (e.g., `America/New_York`)
+</ParamField>
+
+**Examples:**
+
+```bash
+# Every weekday at 9 AM EST
+zeroclaw cron add '0 9 * * 1-5' 'Good morning' --tz America/New_York
+
+# Every 30 minutes
+zeroclaw cron add '*/30 * * * *' 'Check system health'
+
+# First day of month at midnight
+zeroclaw cron add '0 0 1 * *' 'Monthly report'
+```
+
+### add-at
+
+Schedule one-time task at specific time.
+
+```bash
+zeroclaw cron add-at '<timestamp>' '<message>'
+```
+
+**Parameters:**
+
+<ParamField path="timestamp" type="string" required>
+  RFC 3339 timestamp (e.g., `2026-03-15T14:00:00Z`)
+</ParamField>
+
+**Examples:**
+
+```bash
+zeroclaw cron add-at '2026-03-15T14:00:00Z' 'Send reminder'
+zeroclaw cron add-at '2026-12-25T00:00:00-05:00' 'Merry Christmas!'
+```
+
+### add-every
+
+Repeat task at fixed interval.
+
+```bash
+zeroclaw cron add-every <milliseconds> '<message>'
+```
+
+**Examples:**
+
+```bash
+# Every 60 seconds
+zeroclaw cron add-every 60000 'Ping heartbeat'
+
+# Every 5 minutes
+zeroclaw cron add-every 300000 'Status check'
+```
+
+### once
+
+Run task once after delay.
+
+```bash
+zeroclaw cron once <duration> '<message>'
+```
+
+**Duration format:** `<number><unit>` where unit is `s`, `m`, `h`, or `d`
+
+**Examples:**
+
+```bash
+zeroclaw cron once 30m 'Run backup in 30 minutes'
+zeroclaw cron once 1h 'Check deployment status'
+zeroclaw cron once 1d 'Daily summary'
+```
+
+### remove
+
+Remove scheduled task.
+
+```bash
+zeroclaw cron remove <task-id>
+```
+
+### pause
+
+Pause task without deleting.
+
+```bash
+zeroclaw cron pause <task-id>
+```
+
+### resume
+
+Resume paused task.
+
+```bash
+zeroclaw cron resume <task-id>
+```
+
+## Cron Expression Format
+
+Five fields: `min hour day month weekday`
+
+<ResponseField name="min" type="string">
+  Minutes (0-59)
+</ResponseField>
+
+<ResponseField name="hour" type="string">
+  Hours (0-23)
+</ResponseField>
+
+<ResponseField name="day" type="string">
+  Day of month (1-31)
+</ResponseField>
+
+<ResponseField name="month" type="string">
+  Month (1-12)
+</ResponseField>
+
+<ResponseField name="weekday" type="string">
+  Day of week (0-7, where 0 and 7 = Sunday)
+</ResponseField>
+
+### Special Characters
+
+- `*` - Any value
+- `,` - Value list (e.g., `1,15` = 1st and 15th)
+- `-` - Range (e.g., `1-5` = Monday through Friday)
+- `/` - Step (e.g., `*/15` = every 15 minutes)
+
+### Examples
+
+```bash
+# Every hour
+'0 * * * *'
+
+# Every day at midnight
+'0 0 * * *'
+
+# Weekdays at 9 AM
+'0 9 * * 1-5'
+
+# Every 15 minutes
+'*/15 * * * *'
+
+# First Monday of month at 8 AM
+'0 8 1-7 * 1'
+```
+
+## Task Storage
+
+Tasks are stored in `~/.zeroclaw/cron.db` (SQLite).
+
+Backup tasks:
+```bash
+cp ~/.zeroclaw/cron.db ~/.zeroclaw/cron.db.backup
+```
+
+## Related
+
+- [Daemon Command](/api/commands/daemon)
+- [Running Agents](/operations/running-agents)

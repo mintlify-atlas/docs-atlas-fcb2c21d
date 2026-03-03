@@ -1,0 +1,138 @@
+---
+title: zeroclaw service
+description: Manage OS service lifecycle (systemd/launchd user service)
+---
+
+The `zeroclaw service` command manages ZeroClaw as an OS-level service with automatic startup.
+
+## Overview
+
+Install ZeroClaw as a systemd (Linux) or launchd (macOS) user service for:
+- Automatic startup on boot
+- Background execution
+- Log management
+- Process supervision
+
+## Subcommands
+
+### install
+
+Install ZeroClaw as a user service.
+
+```bash
+zeroclaw service install
+```
+
+Creates service file at:
+- **Linux**: `~/.config/systemd/user/zeroclaw.service`
+- **macOS**: `~/Library/LaunchAgents/com.zeroclaw.daemon.plist`
+
+### start
+
+Start the ZeroClaw service.
+
+```bash
+zeroclaw service start
+```
+
+### stop
+
+Stop the ZeroClaw service.
+
+```bash
+zeroclaw service stop
+```
+
+### restart
+
+Restart the ZeroClaw service.
+
+```bash
+zeroclaw service restart
+```
+
+### status
+
+Check service status.
+
+```bash
+zeroclaw service status
+```
+
+Shows:
+- Running state (active/inactive)
+- PID
+- Uptime
+- Recent log entries
+
+### uninstall
+
+Remove the service installation.
+
+```bash
+zeroclaw service uninstall
+```
+
+### enable
+
+Enable auto-start on boot.
+
+```bash
+zeroclaw service enable
+```
+
+### disable
+
+Disable auto-start on boot.
+
+```bash
+zeroclaw service disable
+```
+
+## Options
+
+<ParamField path="--service-init" type="string" default="auto">
+  Init system to use: `auto` (detect), `systemd`, or `openrc`
+</ParamField>
+
+## Examples
+
+### Complete Setup
+
+```bash
+# Install and start
+zeroclaw service install
+zeroclaw service enable
+zeroclaw service start
+
+# Check status
+zeroclaw service status
+```
+
+### View Logs
+
+<Tabs>
+  <Tab title="Linux (systemd)">
+    ```bash
+    # Follow logs
+    journalctl --user -u zeroclaw.service -f
+    
+    # Last 100 lines
+    journalctl --user -u zeroclaw.service -n 100
+    ```
+  </Tab>
+  
+  <Tab title="macOS (launchd)">
+    ```bash
+    # View logs
+    tail -f ~/.zeroclaw/logs/daemon.stdout.log
+    tail -f ~/.zeroclaw/logs/daemon.stderr.log
+    ```
+  </Tab>
+</Tabs>
+
+## Related
+
+- [Daemon Command](/api/commands/daemon)
+- [Running Agents](/operations/running-agents)
+- [Monitoring](/operations/monitoring)
